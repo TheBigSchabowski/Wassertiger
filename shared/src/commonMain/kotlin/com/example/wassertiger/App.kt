@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -112,7 +113,7 @@ fun WassertigerApp(
                     header = header,
                     onStart = onStart,
                     onEdit = { editing = it },
-                    onNew = { editing = Session(name = "Neue Session", steps = listOf(Step(30))) },
+                    onNew = { editing = it ?: Session(name = "Neue Session", steps = listOf(Step(30))) },
                 )
             }
         }
@@ -134,13 +135,15 @@ fun FlashContent(title: String, text: String, finished: Boolean, modifier: Modif
 
 // --- list -------------------------------------------------------------------
 
+/** [onNew] gets a preset to start from, or null for an empty session. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ListScreen(
     sessions: List<Session>,
     header: @Composable () -> Unit,
     onStart: (Session) -> Unit,
     onEdit: (Session) -> Unit,
-    onNew: () -> Unit,
+    onNew: (Session?) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -162,10 +165,7 @@ private fun ListScreen(
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(session.name, style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            "${session.steps.size} Intervalle · ${formatDuration(session.totalSeconds)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
                         Text(
                             session.steps.joinToString("  ") { formatDuration(it.seconds) },
                             style = MaterialTheme.typography.bodySmall,
@@ -178,8 +178,18 @@ private fun ListScreen(
             }
         }
         item {
-            OutlinedButton(onClick = onNew, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            OutlinedButton(onClick = { onNew(null) }, modifier = Modifier.fillMaxWidth()) {
                 Text("+ Neue Session")
+            }
+        }
+        item {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text("Aus Vorlage", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    presets().forEach { preset ->
+                        FilledTonalButton(onClick = { onNew(preset) }) { Text(preset.name) }
+                    }
+                }
             }
         }
     }
@@ -203,6 +213,8 @@ private fun EditorScreen(
 ) {
     PlatformBackHandler(onBack = onCancel)
     var name by remember { mutableStateOf(initial.name) }
+    var endless by remember { mutableStateOf(initial.endless) }
+    var roundsText by remember { mutableStateOf(if (initial.endless) "1" else initial.rounds.toString()) }
     var nextKey by remember { mutableLongStateOf(initial.steps.size.toLong()) }
     val rows = remember {
         mutableStateListOf<EditRow>().apply {
@@ -214,7 +226,8 @@ private fun EditorScreen(
     }
 
     val parsed = rows.map { parseDuration(it.seconds) }
-    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank()
+    val rounds = if (endless) ENDLESS else roundsText.trim().toIntOrNull()?.takeIf { it in 1..999 }
+    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null
 
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
@@ -270,8 +283,32 @@ private fun EditorScreen(
                         enabled = parsed.lastOrNull() != null,
                     ) { Text("Letztes wiederholen") }
                 }
+            }
+            item {
+                Text("Wiederholen", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = roundsText,
+                        onValueChange = { roundsText = it },
+                        label = { Text("Runden") },
+                        isError = !endless && rounds == null,
+                        enabled = !endless,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(100.dp),
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Switch(checked = endless, onCheckedChange = { endless = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("Endlos, bis Stopp")
+                }
+                val round = parsed.filterNotNull().sum()
                 Text(
-                    "Gesamt: ${formatDuration(parsed.filterNotNull().sum())} · Eingabe als Sekunden oder m:ss",
+                    when {
+                        endless -> "Eine Runde: ${formatDuration(round)}, wiederholt bis Stopp"
+                        rounds != null && rounds > 1 -> "Gesamt: ${formatDuration(round * rounds)} ($rounds × ${formatDuration(round)})"
+                        else -> "Gesamt: ${formatDuration(round)}"
+                    } + " · Eingabe als Sekunden oder m:ss",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
@@ -293,6 +330,7 @@ private fun EditorScreen(
                         initial.copy(
                             name = name.trim(),
                             steps = rows.mapIndexed { i, r -> Step(parsed[i]!!, r.name.trim()) },
+                            rounds = rounds!!,
                         )
                     )
                 },
@@ -330,7 +368,11 @@ private fun RunScreen(run: RunState, engine: TimerEngine, hint: String) {
 
         val step = run.step ?: return@Column
         val remaining = ceil(run.remainingMs(now) / 1000.0).toInt()
-        Text("Intervall ${run.index + 1} / ${run.session.steps.size}", style = MaterialTheme.typography.titleMedium)
+        Text(
+            listOf("Intervall ${run.index + 1} / ${run.session.steps.size}", run.roundLabel)
+                .filter { it.isNotBlank() }.joinToString(" · "),
+            style = MaterialTheme.typography.titleMedium,
+        )
         if (step.name.isNotBlank()) {
             Text(step.name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         }

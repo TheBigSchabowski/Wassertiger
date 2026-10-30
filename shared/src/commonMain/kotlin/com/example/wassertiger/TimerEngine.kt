@@ -14,6 +14,8 @@ expect fun monotonicMillis(): Long
 data class RunState(
     val session: Session,
     val index: Int,
+    /** 0-based repetition of the session's interval list. */
+    val round: Int = 0,
     /** [monotonicMillis] at which the current step ends; meaningless while paused. */
     val stepEndAt: Long,
     /** Remaining ms of the current step while paused, null while running. */
@@ -21,7 +23,15 @@ data class RunState(
     val finished: Boolean = false,
 ) {
     val step: Step? get() = session.steps.getOrNull(index)
+    val lastRound: Boolean get() = !session.endless && round >= session.rounds - 1
     val nextStep: Step? get() = session.steps.getOrNull(index + 1)
+        ?: session.steps.firstOrNull()?.takeIf { !lastRound }
+    /** "Runde 3 / 30", "Runde 3" when endless, empty for a session that plays once. */
+    val roundLabel: String get() = when {
+        session.endless -> "Runde ${round + 1}"
+        session.rounds > 1 -> "Runde ${round + 1} / ${session.rounds}"
+        else -> ""
+    }
     val paused: Boolean get() = pausedRemaining != null
     fun remainingMs(now: Long = monotonicMillis()): Long =
         pausedRemaining ?: (stepEndAt - now).coerceAtLeast(0)
@@ -44,7 +54,7 @@ class TimerEngine(private val scope: CoroutineScope) {
 
     fun start(session: Session) {
         if (session.steps.isEmpty()) return
-        val s = RunState(session, 0, monotonicMillis() + session.steps[0].seconds * 1000L)
+        val s = RunState(session, index = 0, stepEndAt = monotonicMillis() + session.steps[0].seconds * 1000L)
         _state.value = s
         listener(TimerEvent.Started, s)
         runLoop()
@@ -95,17 +105,22 @@ class TimerEngine(private val scope: CoroutineScope) {
         }
     }
 
-    /** Ends the current step at [endedAt] and moves on (or finishes). */
+    /** Ends the current step at [endedAt] and moves on, into the next round if any (or finishes). */
     private fun advance(endedAt: Long) {
         val s = state.value ?: return
-        val next = s.index + 1
-        if (next >= s.session.steps.size) {
+        val roundOver = s.index + 1 >= s.session.steps.size
+        if (roundOver && s.lastRound) {
             val done = s.copy(index = s.session.steps.size, finished = true)
             _state.value = done
             listener(TimerEvent.Finished, done)
             return
         }
-        val moved = s.copy(index = next, stepEndAt = endedAt + s.session.steps[next].seconds * 1000L)
+        val next = if (roundOver) 0 else s.index + 1
+        val moved = s.copy(
+            index = next,
+            round = if (roundOver) s.round + 1 else s.round,
+            stepEndAt = endedAt + s.session.steps[next].seconds * 1000L,
+        )
         _state.value = moved
         listener(TimerEvent.Step, moved)
     }
@@ -115,6 +130,7 @@ class TimerEngine(private val scope: CoroutineScope) {
 fun RunState.flashText(): Pair<String, String> {
     if (finished) return "Fertig!" to session.name
     val step = step ?: return "" to ""
+    val position = if (session.steps.size > 1) "${index + 1} / ${session.steps.size}" else ""
     return formatDuration(step.seconds) to
-        listOf(step.name, "${index + 1} / ${session.steps.size}").filter { it.isNotBlank() }.joinToString(" · ")
+        listOf(step.name, position, roundLabel).filter { it.isNotBlank() }.joinToString(" · ")
 }
