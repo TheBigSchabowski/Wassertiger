@@ -12,6 +12,9 @@ Eine Session kann sich wiederholen – eine feste Anzahl **Runden** oder **endlo
 | Pomodoro | 25 min Fokus, 5 min Pause × 4 Runden = 2 h |
 | Alle 5 Sekunden | ein Signal alle 5 s, endlos |
 
+Eigene Vorlagen: im Editor „Als Vorlage speichern“. Sie stehen dann unter „Meine Vorlagen“; „Neu daraus“
+legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie.
+
 | Plattform | Signal beim Wechsel |
 |---|---|
 | Android | Vibration + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |

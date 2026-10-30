@@ -3,6 +3,7 @@ package com.example.wassertiger
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -17,14 +18,21 @@ data class Step(val seconds: Int, val name: String = "")
 /** Marks a session that repeats its intervals until stopped. */
 const val ENDLESS = 0
 
-/** One run ("Lauf"): an ordered list of intervals, played [rounds] times ([ENDLESS] = until stopped). */
+/**
+ * One run ("Lauf"): an ordered list of intervals, played [rounds] times ([ENDLESS] = until stopped).
+ * A [template] is a user-made preset: listed separately and only copied, never started itself.
+ */
 data class Session(
     val id: String = newId(),
     val name: String,
     val steps: List<Step>,
     val rounds: Int = 1,
+    val template: Boolean = false,
 ) {
     val endless: Boolean get() = rounds == ENDLESS
+    /** A fresh session to edit and start, built from this one (a preset or template). */
+    fun newSession(): Session = copy(id = newId(), template = false)
+    fun asTemplate(): Session = copy(id = newId(), template = true)
     val roundSeconds: Int get() = steps.sumOf { it.seconds }
     /** Length of the whole run, null when [endless]. */
     val totalSeconds: Int? get() = if (endless) null else roundSeconds * rounds
@@ -97,6 +105,7 @@ class SessionStore(private val storage: SessionStorage) {
                 },
                 // Sessions saved before rounds existed play once.
                 rounds = o["rounds"]?.jsonPrimitive?.int ?: 1,
+                template = o["template"]?.jsonPrimitive?.boolean ?: false,
             )
         }
     }
@@ -108,6 +117,7 @@ class SessionStore(private val storage: SessionStorage) {
                     put("id", session.id)
                     put("name", session.name)
                     put("rounds", session.rounds)
+                    put("template", session.template)
                     put("steps", buildJsonArray {
                         session.steps.forEach { step ->
                             add(buildJsonObject {

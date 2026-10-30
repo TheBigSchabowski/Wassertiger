@@ -92,6 +92,10 @@ fun WassertigerApp(
                 edit != null -> EditorScreen(
                     initial = edit,
                     isNew = sessions.none { it.id == edit.id },
+                    onSaveAsTemplate = { template ->
+                        sessions = sessions + template
+                        store.save(sessions)
+                    },
                     onSave = { saved ->
                         sessions = if (sessions.any { it.id == saved.id }) {
                             sessions.map { if (it.id == saved.id) saved else it }
@@ -109,11 +113,12 @@ fun WassertigerApp(
                     onCancel = { editing = null },
                 )
                 else -> ListScreen(
-                    sessions = sessions,
+                    sessions = sessions.filter { !it.template },
+                    templates = sessions.filter { it.template },
                     header = header,
                     onStart = onStart,
                     onEdit = { editing = it },
-                    onNew = { editing = it ?: Session(name = "Neue Session", steps = listOf(Step(30))) },
+                    onNew = { editing = it?.newSession() ?: Session(name = "Neue Session", steps = listOf(Step(30))) },
                 )
             }
         }
@@ -135,11 +140,12 @@ fun FlashContent(title: String, text: String, finished: Boolean, modifier: Modif
 
 // --- list -------------------------------------------------------------------
 
-/** [onNew] gets a preset to start from, or null for an empty session. */
+/** [onNew] gets a preset or template to start from, or null for an empty session. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ListScreen(
     sessions: List<Session>,
+    templates: List<Session>,
     header: @Composable () -> Unit,
     onStart: (Session) -> Unit,
     onEdit: (Session) -> Unit,
@@ -158,23 +164,8 @@ private fun ListScreen(
         }
         item { header() }
         itemsIndexed(sessions, key = { _, s -> s.id }) { _, session ->
-            Card(
-                Modifier.fillMaxWidth().clickable { onEdit(session) },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(session.name, style = MaterialTheme.typography.titleLarge)
-                        Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            session.steps.joinToString("  ") { formatDuration(it.seconds) },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                        )
-                    }
-                    Button(onClick = { onStart(session) }) { Text("Start") }
-                }
+            SessionCard(session, onEdit) {
+                Button(onClick = { onStart(session) }) { Text("Start") }
             }
         }
         item {
@@ -190,7 +181,46 @@ private fun ListScreen(
                         FilledTonalButton(onClick = { onNew(preset) }) { Text(preset.name) }
                     }
                 }
+                if (templates.isEmpty()) {
+                    Text(
+                        "Eigene Vorlagen: im Editor „Als Vorlage speichern“.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+        }
+        if (templates.isNotEmpty()) {
+            item { Text("Meine Vorlagen", style = MaterialTheme.typography.labelLarge) }
+            itemsIndexed(templates, key = { _, s -> s.id }) { _, template ->
+                SessionCard(template, onEdit) {
+                    FilledTonalButton(onClick = { onNew(template) }) { Text("Neu daraus") }
+                }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+/** Tapping the card edits [session]; [action] sits on the right. */
+@Composable
+private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Composable () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().clickable { onEdit(session) },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(session.name, style = MaterialTheme.typography.titleLarge)
+                Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    session.steps.joinToString("  ") { formatDuration(it.seconds) },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+            }
+            action()
         }
     }
 }
@@ -207,6 +237,7 @@ private class EditRow(val key: Long, seconds: String, name: String) {
 private fun EditorScreen(
     initial: Session,
     isNew: Boolean,
+    onSaveAsTemplate: (Session) -> Unit,
     onSave: (Session) -> Unit,
     onDelete: () -> Unit,
     onCancel: () -> Unit,
@@ -228,6 +259,12 @@ private fun EditorScreen(
     val parsed = rows.map { parseDuration(it.seconds) }
     val rounds = if (endless) ENDLESS else roundsText.trim().toIntOrNull()?.takeIf { it in 1..999 }
     val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null
+    fun edited() = initial.copy(
+        name = name.trim(),
+        steps = rows.mapIndexed { i, r -> Step(parsed[i]!!, r.name.trim()) },
+        rounds = rounds!!,
+    )
+    var templateSaved by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
@@ -238,7 +275,7 @@ private fun EditorScreen(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name der Session") },
+                    label = { Text(if (initial.template) "Name der Vorlage" else "Name der Session") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 )
@@ -312,6 +349,18 @@ private fun EditorScreen(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
+                if (!initial.template) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            enabled = valid,
+                            onClick = {
+                                onSaveAsTemplate(edited().asTemplate())
+                                templateSaved = true
+                            },
+                        ) { Text("Als Vorlage speichern") }
+                        if (templateSaved) Text("  ✓ gespeichert", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             }
         }
         Row(
@@ -323,18 +372,7 @@ private fun EditorScreen(
             }
             Spacer(Modifier.weight(1f))
             OutlinedButton(onClick = onCancel) { Text("Abbrechen") }
-            Button(
-                enabled = valid,
-                onClick = {
-                    onSave(
-                        initial.copy(
-                            name = name.trim(),
-                            steps = rows.mapIndexed { i, r -> Step(parsed[i]!!, r.name.trim()) },
-                            rounds = rounds!!,
-                        )
-                    )
-                },
-            ) { Text("Speichern") }
+            Button(enabled = valid, onClick = { onSave(edited()) }) { Text("Speichern") }
         }
     }
 }

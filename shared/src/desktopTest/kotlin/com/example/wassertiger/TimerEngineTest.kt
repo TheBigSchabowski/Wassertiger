@@ -51,6 +51,12 @@ class TimerEngineTest {
         store.save(presets())
         assertEquals(listOf(30, 4, ENDLESS), store.load().map { it.rounds })
 
+        val template = presets().first().asTemplate()
+        store.save(listOf(session, template))
+        assertEquals(listOf(false, true), store.load().map { it.template })
+        val fromTemplate = template.newSession()
+        assertTrue(!fromTemplate.template && fromTemplate.id != template.id && fromTemplate.steps == template.steps)
+
         // Data written by 1.0.0 has no rounds and plays once.
         saved = """[{"id":"a","name":"Alt","steps":[{"seconds":10,"name":""}]}]"""
         assertEquals(1, store.load().single().rounds)
