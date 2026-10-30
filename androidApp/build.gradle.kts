@@ -8,7 +8,7 @@ kotlin {
 }
 
 android {
-    namespace = "com.example.intervalltimer"
+    namespace = "com.example.wassertiger"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -16,7 +16,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.intervalltimer"
+        applicationId = "com.example.wassertiger"
         // turnScreenOn / showWhenLocked on activities need API 27
         minSdk = 27
         targetSdk = 36

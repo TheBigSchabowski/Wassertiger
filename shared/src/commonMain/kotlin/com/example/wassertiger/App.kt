@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,7 +59,7 @@ val DoneGreen = Color(0xFF43A047)
 expect fun PlatformBackHandler(onBack: () -> Unit)
 
 @Composable
-fun IntervallTheme(content: @Composable () -> Unit) {
+fun WassertigerTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(primary = Amber, onPrimary = Color.Black)) {
         Surface(Modifier.fillMaxSize()) { content() }
     }
@@ -71,7 +71,7 @@ fun IntervallTheme(content: @Composable () -> Unit) {
  * @param header platform-specific notices above the session list.
  */
 @Composable
-fun IntervallApp(
+fun WassertigerApp(
     store: SessionStore,
     engine: TimerEngine,
     onStart: (Session) -> Unit,
@@ -148,7 +148,7 @@ private fun ListScreen(
     ) {
         item {
             Text(
-                "Intervall",
+                "Wassertiger",
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.padding(top = 16.dp),
             )

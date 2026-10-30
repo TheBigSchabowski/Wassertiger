@@ -20,5 +20,5 @@ jobs:
       - run: ./gradlew :shared:desktopTest :androidApp:assembleDebug :desktopApp:packageDeb
       - uses: actions/upload-artifact@v4
         with:
-          name: intervall-linux-deb
+          name: wassertiger-linux-deb
           path: desktopApp/build/compose/binaries/main/deb/*.deb

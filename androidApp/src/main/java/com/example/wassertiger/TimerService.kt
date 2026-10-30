@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -66,7 +66,7 @@ class TimerService : Service() {
             startForeground(ID_ONGOING, notification)
         }
         cpuLock?.takeIf { it.isHeld }?.release()
-        cpuLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "IntervallTimer:run").apply {
+        cpuLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Wassertiger:run").apply {
             setReferenceCounted(false)
             acquire(4 * 60 * 60 * 1000L)
         }
@@ -163,7 +163,7 @@ class TimerService : Service() {
             @Suppress("DEPRECATION")
             power.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "IntervallTimer:flash",
+                "Wassertiger:flash",
             ).acquire(2500)
         }
     }

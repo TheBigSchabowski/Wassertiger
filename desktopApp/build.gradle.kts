@@ -18,7 +18,7 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "com.example.intervalltimer.MainKt"
+        mainClass = "com.example.wassertiger.MainKt"
 
         // jpackage comes from a Temurin 21 toolchain (auto-provisioned): Android Studio's JBR also
         // satisfies "JDK 21" but ships without jpackage. The app bundles that JDK's runtime via jlink.
@@ -30,17 +30,17 @@ compose.desktop {
         nativeDistributions {
             // Each format can only be built on its own operating system: the DMG on the Mac, the DEB on Linux.
             targetFormats(TargetFormat.Dmg, TargetFormat.Deb)
-            packageName = "Intervall"
+            packageName = "Wassertiger"
             packageVersion = libs.versions.app.get()
-            description = "Intervall-Timer, der bei jedem Wechsel kurz aufleuchtet"
+            description = "Wassertiger – Intervall-Timer, der bei jedem Wechsel kurz aufleuchtet"
             vendor = "TheBigSchabowski"
             modules("java.desktop")
             macOS {
-                bundleID = "com.example.intervalltimer"
+                bundleID = "com.example.wassertiger"
                 iconFile.set(project.file("icon.icns"))
             }
             linux {
-                packageName = "intervall"
+                packageName = "wassertiger"
                 iconFile.set(project.file("icon.png"))
                 debMaintainer = "TheBigSchabowski@users.noreply.github.com"
                 appCategory = "utils"

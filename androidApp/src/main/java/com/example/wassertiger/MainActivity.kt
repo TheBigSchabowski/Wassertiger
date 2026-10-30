@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import android.Manifest
 import android.app.NotificationManager
@@ -55,8 +55,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-            IntervallTheme {
-                IntervallApp(
+            WassertigerTheme {
+                WassertigerApp(
                     store = store,
                     engine = TimerService.engine,
                     onStart = { session ->

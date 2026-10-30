@@ -23,5 +23,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "IntervallTimer"
+rootProject.name = "Wassertiger"
 include(":shared", ":androidApp", ":desktopApp")

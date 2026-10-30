@@ -1,4 +1,4 @@
-# Intervall
+# Wassertiger
 
 Intervall-Timer für Android, macOS und Linux. Eine **Session** ist eine frei konfigurierbare Liste von
 Intervallen (z. B. 15 s, 15 s, 30 s, 30 s, 1:00, 48 s). Bei jedem Wechsel gibt es ein kurzes Signal –
@@ -35,4 +35,4 @@ installierte Version drüber installieren lässt.
 
 - Beim ersten Start nach der Benachrichtigungs-Erlaubnis fragen lassen; fehlt die Erlaubnis für
   Vollbild-Hinweise (Android 14+), zeigt die App einen Knopf zu der Einstellung.
-- Auf Samsung/Xiaomi die Akku-Optimierung für „Intervall“ ausschalten.
+- Auf Samsung/Xiaomi die Akku-Optimierung für „Wassertiger“ ausschalten.

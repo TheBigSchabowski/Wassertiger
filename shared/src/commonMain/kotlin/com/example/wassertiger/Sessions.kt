@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray

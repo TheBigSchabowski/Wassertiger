@@ -13,7 +13,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.IntervallTimer">
+        android:theme="@style/Theme.Wassertiger">
 
         <activity
             android:name=".MainActivity"
@@ -36,7 +36,7 @@
             android:turnScreenOn="true"
             android:taskAffinity=""
             android:launchMode="singleInstance"
-            android:theme="@style/Theme.IntervallTimer.Flash" />
+            android:theme="@style/Theme.Wassertiger.Flash" />
 
         <service
             android:name=".TimerService"

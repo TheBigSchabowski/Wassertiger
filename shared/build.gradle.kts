@@ -9,7 +9,7 @@ kotlin {
     jvmToolchain(21)
 
     android {
-        namespace = "com.example.intervalltimer.shared"
+        namespace = "com.example.wassertiger.shared"
         compileSdk = 36
         minSdk = 27
     }

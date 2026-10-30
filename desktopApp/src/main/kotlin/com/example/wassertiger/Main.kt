@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,9 +24,9 @@ private val isMac = System.getProperty("os.name").startsWith("Mac")
 private fun dataFile(): File {
     val home = System.getProperty("user.home")
     val dir = if (isMac) {
-        File(home, "Library/Application Support/Intervall")
+        File(home, "Library/Application Support/Wassertiger")
     } else {
-        File(System.getenv("XDG_CONFIG_HOME") ?: "$home/.config", "intervall")
+        File(System.getenv("XDG_CONFIG_HOME") ?: "$home/.config", "wassertiger")
     }
     return File(dir, "sessions.json")
 }
@@ -56,7 +56,7 @@ private class StayAwake {
             listOf("caffeinate", "-d", "-i", "-w", pid)
         } else {
             listOf(
-                "systemd-inhibit", "--what=idle:sleep", "--who=Intervall", "--why=Intervall-Session läuft",
+                "systemd-inhibit", "--what=idle:sleep", "--who=Wassertiger", "--why=Wassertiger-Session läuft",
                 "tail", "--pid=$pid", "-f", "/dev/null",
             )
         }
@@ -101,12 +101,12 @@ fun main() = application {
             stayAwake.stop()
             exitApplication()
         },
-        title = "Intervall",
+        title = "Wassertiger",
         icon = icon,
         state = rememberWindowState(size = DpSize(560.dp, 820.dp)),
     ) {
-        IntervallTheme {
-            IntervallApp(
+        WassertigerTheme {
+            WassertigerApp(
                 store = store,
                 engine = engine,
                 onStart = engine::start,
@@ -120,7 +120,7 @@ fun main() = application {
     flash?.let { f ->
         Window(
             onCloseRequest = { flash = null },
-            title = "Intervall",
+            title = "Wassertiger",
             undecorated = true,
             alwaysOnTop = true,
             focusable = false,

@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking

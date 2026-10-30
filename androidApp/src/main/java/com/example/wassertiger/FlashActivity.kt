@@ -1,4 +1,4 @@
-package com.example.intervalltimer
+package com.example.wassertiger
 
 import android.os.Bundle
 import android.view.WindowManager
