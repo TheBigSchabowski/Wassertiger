@@ -28,8 +28,13 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew :shared:desktopTest         # Tests
 ```
 
-Das APK lokal bauen, damit es immer mit demselben Debug-Key signiert ist und sich über eine
-installierte Version drüber installieren lässt.
+Fertige Pakete (APK, .deb, Linux-tar.gz) hängen an den GitHub-Releases. Das Release-APK baut
+`./gradlew :androidApp:assembleRelease` und signiert es mit `~/.android/wassertiger-release.jks`
+(+ `.pass`); fehlt der Schlüssel, bleibt das APK unsigniert. Updates lassen sich nur mit demselben
+Schlüssel über eine installierte Version spielen.
+
+`./gradlew :androidApp:testDebugUnitTest` startet die App ohne Gerät (Robolectric) und spielt die
+Beispiel-Session an.
 
 ## Android-Hinweise
 
