@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.IntervallTimer" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF121417</item>
+        <item name="android:statusBarColor">#FF121417</item>
+        <item name="android:navigationBarColor">#FF121417</item>
+    </style>
+
+    <style name="Theme.IntervallTimer.Flash" parent="android:Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">#FFFFB300</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>
