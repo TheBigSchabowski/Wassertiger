@@ -68,7 +68,7 @@ class TimerService : Service() {
         cpuLock?.takeIf { it.isHeld }?.release()
         cpuLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Wassertiger:run").apply {
             setReferenceCounted(false)
-            acquire(4 * 60 * 60 * 1000L)
+            acquire(CPU_LOCK_MS)
         }
     }
 
@@ -76,6 +76,7 @@ class TimerService : Service() {
         when (event) {
             TimerEvent.Started -> vibrate(PATTERN_START)
             TimerEvent.Step -> {
+                cpuLock?.acquire(CPU_LOCK_MS) // endless sessions may run past the initial timeout
                 vibrate(PATTERN_STEP)
                 wakeScreen(state)
                 notifications.notify(ID_ONGOING, ongoingNotification())
@@ -195,7 +196,7 @@ class TimerService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
         val step = s?.step
         if (s != null && step != null) {
-            val label = listOf(step.name, "Schritt ${s.index + 1} / ${s.session.steps.size}")
+            val label = listOf(step.name, "Schritt ${s.index + 1} / ${s.session.steps.size}", s.roundLabel)
                 .filter { it.isNotBlank() }.joinToString(" · ")
             builder.setContentTitle(if (s.paused) "Pausiert – ${s.session.name}" else s.session.name)
                 .setContentText(label)
@@ -236,6 +237,7 @@ class TimerService : Service() {
         private const val CHANNEL_FLASH = "flash"
         private const val ID_ONGOING = 1
         private const val ID_FLASH = 2
+        private const val CPU_LOCK_MS = 4 * 60 * 60 * 1000L
 
         private val PATTERN_START = longArrayOf(0, 200)
         private val PATTERN_STEP = longArrayOf(0, 350, 150, 350)

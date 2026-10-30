@@ -4,6 +4,17 @@ Intervall-Timer für Android, macOS und Linux. Eine **Session** ist eine frei ko
 Intervallen (z. B. 15 s, 15 s, 30 s, 30 s, 1:00, 48 s). Bei jedem Wechsel gibt es ein kurzes Signal –
 **ohne Ton**, damit Spotify & Co. ungestört weiterlaufen.
 
+Eine Session kann sich wiederholen – eine feste Anzahl **Runden** oder **endlos** bis Stopp. Vorlagen:
+
+| Vorlage | Ablauf |
+|---|---|
+| Atemübung | 5 s Einatmen, 5 s Ausatmen × 30 Runden = 5 min |
+| Pomodoro | 25 min Fokus, 5 min Pause × 4 Runden = 2 h |
+| Alle 5 Sekunden | ein Signal alle 5 s, endlos |
+
+Eigene Vorlagen: im Editor „Als Vorlage speichern“. Sie stehen dann unter „Meine Vorlagen“; „Neu daraus“
+legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie.
+
 | Plattform | Signal beim Wechsel |
 |---|---|
 | Android | Vibration + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |

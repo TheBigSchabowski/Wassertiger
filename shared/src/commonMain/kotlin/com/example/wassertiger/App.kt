@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -91,6 +92,10 @@ fun WassertigerApp(
                 edit != null -> EditorScreen(
                     initial = edit,
                     isNew = sessions.none { it.id == edit.id },
+                    onSaveAsTemplate = { template ->
+                        sessions = sessions + template
+                        store.save(sessions)
+                    },
                     onSave = { saved ->
                         sessions = if (sessions.any { it.id == saved.id }) {
                             sessions.map { if (it.id == saved.id) saved else it }
@@ -108,11 +113,12 @@ fun WassertigerApp(
                     onCancel = { editing = null },
                 )
                 else -> ListScreen(
-                    sessions = sessions,
+                    sessions = sessions.filter { !it.template },
+                    templates = sessions.filter { it.template },
                     header = header,
                     onStart = onStart,
                     onEdit = { editing = it },
-                    onNew = { editing = Session(name = "Neue Session", steps = listOf(Step(30))) },
+                    onNew = { editing = it?.newSession() ?: Session(name = "Neue Session", steps = listOf(Step(30))) },
                 )
             }
         }
@@ -134,13 +140,16 @@ fun FlashContent(title: String, text: String, finished: Boolean, modifier: Modif
 
 // --- list -------------------------------------------------------------------
 
+/** [onNew] gets a preset or template to start from, or null for an empty session. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ListScreen(
     sessions: List<Session>,
+    templates: List<Session>,
     header: @Composable () -> Unit,
     onStart: (Session) -> Unit,
     onEdit: (Session) -> Unit,
-    onNew: () -> Unit,
+    onNew: (Session?) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -155,32 +164,63 @@ private fun ListScreen(
         }
         item { header() }
         itemsIndexed(sessions, key = { _, s -> s.id }) { _, session ->
-            Card(
-                Modifier.fillMaxWidth().clickable { onEdit(session) },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(session.name, style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            "${session.steps.size} Intervalle · ${formatDuration(session.totalSeconds)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            session.steps.joinToString("  ") { formatDuration(it.seconds) },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                        )
-                    }
-                    Button(onClick = { onStart(session) }) { Text("Start") }
-                }
+            SessionCard(session, onEdit) {
+                Button(onClick = { onStart(session) }) { Text("Start") }
             }
         }
         item {
-            OutlinedButton(onClick = onNew, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            OutlinedButton(onClick = { onNew(null) }, modifier = Modifier.fillMaxWidth()) {
                 Text("+ Neue Session")
             }
+        }
+        item {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text("Aus Vorlage", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    presets().forEach { preset ->
+                        FilledTonalButton(onClick = { onNew(preset) }) { Text(preset.name) }
+                    }
+                }
+                if (templates.isEmpty()) {
+                    Text(
+                        "Eigene Vorlagen: im Editor „Als Vorlage speichern“.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (templates.isNotEmpty()) {
+            item { Text("Meine Vorlagen", style = MaterialTheme.typography.labelLarge) }
+            itemsIndexed(templates, key = { _, s -> s.id }) { _, template ->
+                SessionCard(template, onEdit) {
+                    FilledTonalButton(onClick = { onNew(template) }) { Text("Neu daraus") }
+                }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+/** Tapping the card edits [session]; [action] sits on the right. */
+@Composable
+private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Composable () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().clickable { onEdit(session) },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(session.name, style = MaterialTheme.typography.titleLarge)
+                Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    session.steps.joinToString("  ") { formatDuration(it.seconds) },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+            }
+            action()
         }
     }
 }
@@ -197,12 +237,15 @@ private class EditRow(val key: Long, seconds: String, name: String) {
 private fun EditorScreen(
     initial: Session,
     isNew: Boolean,
+    onSaveAsTemplate: (Session) -> Unit,
     onSave: (Session) -> Unit,
     onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
     PlatformBackHandler(onBack = onCancel)
     var name by remember { mutableStateOf(initial.name) }
+    var endless by remember { mutableStateOf(initial.endless) }
+    var roundsText by remember { mutableStateOf(if (initial.endless) "1" else initial.rounds.toString()) }
     var nextKey by remember { mutableLongStateOf(initial.steps.size.toLong()) }
     val rows = remember {
         mutableStateListOf<EditRow>().apply {
@@ -214,7 +257,14 @@ private fun EditorScreen(
     }
 
     val parsed = rows.map { parseDuration(it.seconds) }
-    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank()
+    val rounds = if (endless) ENDLESS else roundsText.trim().toIntOrNull()?.takeIf { it in 1..999 }
+    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null
+    fun edited() = initial.copy(
+        name = name.trim(),
+        steps = rows.mapIndexed { i, r -> Step(parsed[i]!!, r.name.trim()) },
+        rounds = rounds!!,
+    )
+    var templateSaved by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
@@ -225,7 +275,7 @@ private fun EditorScreen(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name der Session") },
+                    label = { Text(if (initial.template) "Name der Vorlage" else "Name der Session") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 )
@@ -270,11 +320,47 @@ private fun EditorScreen(
                         enabled = parsed.lastOrNull() != null,
                     ) { Text("Letztes wiederholen") }
                 }
+            }
+            item {
+                Text("Wiederholen", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = roundsText,
+                        onValueChange = { roundsText = it },
+                        label = { Text("Runden") },
+                        isError = !endless && rounds == null,
+                        enabled = !endless,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(100.dp),
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Switch(checked = endless, onCheckedChange = { endless = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("Endlos, bis Stopp")
+                }
+                val round = parsed.filterNotNull().sum()
                 Text(
-                    "Gesamt: ${formatDuration(parsed.filterNotNull().sum())} · Eingabe als Sekunden oder m:ss",
+                    when {
+                        endless -> "Eine Runde: ${formatDuration(round)}, wiederholt bis Stopp"
+                        rounds != null && rounds > 1 -> "Gesamt: ${formatDuration(round * rounds)} ($rounds × ${formatDuration(round)})"
+                        else -> "Gesamt: ${formatDuration(round)}"
+                    } + " · Eingabe als Sekunden oder m:ss",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
+                if (!initial.template) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            enabled = valid,
+                            onClick = {
+                                onSaveAsTemplate(edited().asTemplate())
+                                templateSaved = true
+                            },
+                        ) { Text("Als Vorlage speichern") }
+                        if (templateSaved) Text("  ✓ gespeichert", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             }
         }
         Row(
@@ -286,17 +372,7 @@ private fun EditorScreen(
             }
             Spacer(Modifier.weight(1f))
             OutlinedButton(onClick = onCancel) { Text("Abbrechen") }
-            Button(
-                enabled = valid,
-                onClick = {
-                    onSave(
-                        initial.copy(
-                            name = name.trim(),
-                            steps = rows.mapIndexed { i, r -> Step(parsed[i]!!, r.name.trim()) },
-                        )
-                    )
-                },
-            ) { Text("Speichern") }
+            Button(enabled = valid, onClick = { onSave(edited()) }) { Text("Speichern") }
         }
     }
 }
@@ -330,7 +406,11 @@ private fun RunScreen(run: RunState, engine: TimerEngine, hint: String) {
 
         val step = run.step ?: return@Column
         val remaining = ceil(run.remainingMs(now) / 1000.0).toInt()
-        Text("Intervall ${run.index + 1} / ${run.session.steps.size}", style = MaterialTheme.typography.titleMedium)
+        Text(
+            listOf("Intervall ${run.index + 1} / ${run.session.steps.size}", run.roundLabel)
+                .filter { it.isNotBlank() }.joinToString(" · "),
+            style = MaterialTheme.typography.titleMedium,
+        )
         if (step.name.isNotBlank()) {
             Text(step.name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         }
