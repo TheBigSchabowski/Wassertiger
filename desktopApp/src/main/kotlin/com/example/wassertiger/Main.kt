@@ -75,6 +75,7 @@ fun main() = application {
     val store = remember { SessionStore(FileStorage) }
     val engine = remember { TimerEngine(MainScope()) }
     val stayAwake = remember { StayAwake() }
+    val music = remember { MusicPlayer(LiveStream(::LineSink)) { DrumSamples.load(::bundledResource) } }
     var flash by remember { mutableStateOf<Flash?>(null) }
     val icon = remember {
         Thread.currentThread().contextClassLoader.getResourceAsStream("icon.png")
@@ -83,6 +84,7 @@ fun main() = application {
 
     LaunchedEffect(engine) {
         engine.listener = { event, state ->
+            music.follow(state.takeIf { event != TimerEvent.Stopped })
             when (event) {
                 TimerEvent.Started -> stayAwake.start()
                 TimerEvent.Step -> state.flashText().let { (t, s) -> flash = Flash(t, s, false) }
@@ -98,6 +100,7 @@ fun main() = application {
 
     Window(
         onCloseRequest = {
+            music.stop()
             stayAwake.stop()
             exitApplication()
         },
@@ -110,7 +113,7 @@ fun main() = application {
                 store = store,
                 engine = engine,
                 onStart = engine::start,
-                runHint = "Musik läuft ungestört weiter – bei jedem Wechsel leuchtet\n" +
+                runHint = "Spotify & Co. laufen ungestört weiter – bei jedem Wechsel leuchtet\n" +
                     "ein Hinweis über allen Fenstern auf. Der Bildschirm bleibt an.",
             )
         }

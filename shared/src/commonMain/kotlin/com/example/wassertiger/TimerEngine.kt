@@ -131,6 +131,12 @@ fun RunState.flashText(): Pair<String, String> {
     if (finished) return "Fertig!" to session.name
     val step = step ?: return "" to ""
     val position = if (session.steps.size > 1) "${index + 1} / ${session.steps.size}" else ""
+    // Music: what to play now is the headline ("Phrygisch"), the sound underneath.
+    if (session.music) {
+        val sound = step.soundLabel()
+        return step.name.ifBlank { sound } to
+            listOf(sound.takeIf { step.name.isNotBlank() }.orEmpty(), position, roundLabel).filter { it.isNotBlank() }.joinToString(" · ")
+    }
     return formatDuration(step.seconds) to
         listOf(step.name, position, roundLabel).filter { it.isNotBlank() }.joinToString(" · ")
 }

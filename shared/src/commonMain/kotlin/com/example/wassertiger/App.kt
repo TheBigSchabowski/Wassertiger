@@ -2,6 +2,7 @@ package com.example.wassertiger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,16 +20,23 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -40,16 +48,25 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.ceil
 
 val Amber = Color(0xFFFFB300)
@@ -67,6 +84,9 @@ fun WassertigerTheme(content: @Composable () -> Unit) {
 }
 
 /**
+ * Two pages side by side: the silent timer and, one swipe (or → key) to the right, music sessions
+ * with drone and drums.
+ *
  * @param onStart starts [session] on the platform (Android goes through its foreground service).
  * @param runHint explains how the platform signals a step change.
  * @param header platform-specific notices above the session list.
@@ -82,13 +102,34 @@ fun WassertigerApp(
     val run by engine.state.collectAsState()
     var sessions by remember { mutableStateOf(store.load()) }
     var editing by remember { mutableStateOf<Session?>(null) }
+    val pager = rememberPagerState(pageCount = { 2 })
+    val scope = rememberCoroutineScope()
+    val focus = remember { FocusRequester() }
+    val onList = run == null && editing == null
+    // Key events need a focused node; the lists have no text fields, so the whole page takes focus.
+    LaunchedEffect(onList) { if (onList) runCatching { focus.requestFocus() } }
 
-    Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
+    Box(
+        Modifier.fillMaxSize().safeDrawingPadding()
+            .focusRequester(focus)
+            .focusable()
+            .onPreviewKeyEvent { e ->
+                val page = when {
+                    !onList || e.type != KeyEventType.KeyDown -> null
+                    e.key == Key.DirectionRight -> 1
+                    e.key == Key.DirectionLeft -> 0
+                    else -> null
+                }
+                if (page != null) scope.launch { pager.animateScrollToPage(page) }
+                page != null
+            },
+        contentAlignment = Alignment.TopCenter,
+    ) {
         val current = run
         val edit = editing
         Box(Modifier.widthIn(max = 720.dp)) {
             when {
-                current != null -> RunScreen(current, engine, runHint)
+                current != null -> RunScreen(current, engine, if (current.session.music) MUSIC_HINT else runHint)
                 edit != null -> EditorScreen(
                     initial = edit,
                     isNew = sessions.none { it.id == edit.id },
@@ -112,14 +153,40 @@ fun WassertigerApp(
                     },
                     onCancel = { editing = null },
                 )
-                else -> ListScreen(
-                    sessions = sessions.filter { !it.template },
-                    templates = sessions.filter { it.template },
-                    header = header,
-                    onStart = onStart,
-                    onEdit = { editing = it },
-                    onNew = { editing = it?.newSession() ?: Session(name = "Neue Session", steps = listOf(Step(30))) },
-                )
+                else -> Column {
+                    Text(
+                        "Wassertiger",
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+                    )
+                    PrimaryTabRow(selectedTabIndex = pager.currentPage) {
+                        listOf("Timer", "Musik").forEachIndexed { i, title ->
+                            Tab(
+                                selected = pager.currentPage == i,
+                                onClick = { scope.launch { pager.animateScrollToPage(i) } },
+                                text = { Text(title) },
+                            )
+                        }
+                    }
+                    HorizontalPager(pager, Modifier.weight(1f)) { page ->
+                        val music = page == 1
+                        ListScreen(
+                            music = music,
+                            sessions = sessions.filter { !it.template && it.music == music },
+                            templates = sessions.filter { it.template && it.music == music },
+                            header = header,
+                            onStart = onStart,
+                            onEdit = { editing = it },
+                            onNew = {
+                                editing = it?.newSession() ?: if (music) {
+                                    Session(name = "Neue Übung", music = true, steps = listOf(Step(5 * 60, drone = 9)))
+                                } else {
+                                    Session(name = "Neue Session", steps = listOf(Step(30)))
+                                }
+                            },
+                        )
+                    }
+                }
             }
         }
     }
@@ -133,7 +200,8 @@ fun FlashContent(title: String, text: String, finished: Boolean, modifier: Modif
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(title, fontSize = 96.sp, color = Color.Black, textAlign = TextAlign.Center)
+        // Music flashes the word to play ("Mixolydisch"), which needs room.
+        Text(title, fontSize = if (title.length > 6) 56.sp else 96.sp, color = Color.Black, textAlign = TextAlign.Center)
         Text(text, fontSize = 28.sp, color = Color.Black, textAlign = TextAlign.Center)
     }
 }
@@ -144,6 +212,7 @@ fun FlashContent(title: String, text: String, finished: Boolean, modifier: Modif
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ListScreen(
+    music: Boolean,
     sessions: List<Session>,
     templates: List<Session>,
     header: @Composable () -> Unit,
@@ -155,14 +224,17 @@ private fun ListScreen(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            Text(
-                "Wassertiger",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(top = 16.dp),
-            )
-        }
         item { header() }
+        if (music && sessions.isEmpty()) {
+            item {
+                Text(
+                    "Jedes Intervall spielt eine Drone, Drums, beides oder nichts – und zeigt groß, was du " +
+                        "darüber spielst (z. B. „Phrygisch“ über der A-Drone).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         itemsIndexed(sessions, key = { _, s -> s.id }) { _, session ->
             SessionCard(session, onEdit) {
                 Button(onClick = { onStart(session) }) { Text("Start") }
@@ -170,14 +242,14 @@ private fun ListScreen(
         }
         item {
             OutlinedButton(onClick = { onNew(null) }, modifier = Modifier.fillMaxWidth()) {
-                Text("+ Neue Session")
+                Text(if (music) "+ Neue Übung" else "+ Neue Session")
             }
         }
         item {
             Column(Modifier.padding(bottom = 24.dp)) {
                 Text("Aus Vorlage", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    presets().forEach { preset ->
+                    (if (music) musicPresets() else presets()).forEach { preset ->
                         FilledTonalButton(onClick = { onNew(preset) }) { Text(preset.name) }
                     }
                 }
@@ -214,7 +286,10 @@ private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Co
                 Text(session.name, style = MaterialTheme.typography.titleLarge)
                 Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    session.steps.joinToString("  ") { formatDuration(it.seconds) },
+                    session.steps.joinToString("  ") { step ->
+                        if (session.music) "${step.name.ifBlank { step.soundLabel() }} ${formatDuration(step.seconds)}"
+                        else formatDuration(step.seconds)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -227,9 +302,15 @@ private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Co
 
 // --- editor -----------------------------------------------------------------
 
-private class EditRow(val key: Long, seconds: String, name: String) {
+private class EditRow(val key: Long, seconds: String, name: String, drone: Int? = null, groove: String? = null, bpm: Int = 90) {
     var seconds by mutableStateOf(seconds)
     var name by mutableStateOf(name)
+    var drone by mutableStateOf(drone)
+    var groove by mutableStateOf(groove)
+    var bpm by mutableStateOf(bpm.toString())
+
+    /** The tempo, null when out of range; only asked for with drums. */
+    val parsedBpm: Int? get() = bpm.trim().toIntOrNull()?.takeIf { it in MusicSettings.MIN_BPM..MusicSettings.MAX_BPM }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -246,23 +327,39 @@ private fun EditorScreen(
     var name by remember { mutableStateOf(initial.name) }
     var endless by remember { mutableStateOf(initial.endless) }
     var roundsText by remember { mutableStateOf(if (initial.endless) "1" else initial.rounds.toString()) }
+    var sound by remember { mutableStateOf(initial.sound) }
+    var fifth by remember { mutableStateOf(initial.fifth) }
+    var kit by remember { mutableStateOf(initial.kit) }
+    val music = initial.music
+    // Music intervals run for minutes, so they are typed in minutes.
+    fun durationText(seconds: Int) = if (music) formatMinutes(seconds) else seconds.toString()
     var nextKey by remember { mutableLongStateOf(initial.steps.size.toLong()) }
     val rows = remember {
         mutableStateListOf<EditRow>().apply {
-            initial.steps.forEachIndexed { i, s -> add(EditRow(i.toLong(), s.seconds.toString(), s.name)) }
+            initial.steps.forEachIndexed { i, s ->
+                add(EditRow(i.toLong(), durationText(s.seconds), s.name, s.drone, s.groove, s.bpm))
+            }
         }
     }
+    /** A new interval keeps the sound of the last one. */
     fun addRow(seconds: Int, name: String = "") {
-        rows.add(EditRow(nextKey++, seconds.toString(), name))
+        val last = rows.lastOrNull()
+        rows.add(EditRow(nextKey++, durationText(seconds), name, last?.drone, last?.groove, last?.parsedBpm ?: 90))
     }
 
-    val parsed = rows.map { parseDuration(it.seconds) }
+    val parsed = rows.map { if (music) parseMinutes(it.seconds) else parseDuration(it.seconds) }
     val rounds = if (endless) ENDLESS else roundsText.trim().toIntOrNull()?.takeIf { it in 1..999 }
-    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null
+    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null &&
+        rows.all { it.groove == null || it.parsedBpm != null }
     fun edited() = initial.copy(
         name = name.trim(),
-        steps = rows.mapIndexed { i, r -> Step(parsed[i]!!, r.name.trim()) },
+        steps = rows.mapIndexed { i, r ->
+            if (music) Step(parsed[i]!!, r.name.trim(), r.drone, r.groove, r.parsedBpm ?: 90) else Step(parsed[i]!!, r.name.trim())
+        },
         rounds = rounds!!,
+        sound = sound,
+        fifth = fifth,
+        kit = kit,
     )
     var templateSaved by remember { mutableStateOf(false) }
 
@@ -281,44 +378,68 @@ private fun EditorScreen(
                 )
             }
             itemsIndexed(rows, key = { _, r -> r.key }) { i, row ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${i + 1}.", Modifier.width(28.dp))
-                    OutlinedTextField(
-                        value = row.seconds,
-                        onValueChange = { row.seconds = it },
-                        label = { Text("Sek.") },
-                        isError = parsed[i] == null,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.width(84.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(
-                        value = row.name,
-                        onValueChange = { row.name = it },
-                        label = { Text("Übung (optional)") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Column {
-                        TextButton(
-                            onClick = { rows.add(i - 1, rows.removeAt(i)) },
-                            enabled = i > 0,
-                        ) { Text("↑") }
-                        TextButton(onClick = { rows.removeAt(i) }) { Text("✕") }
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${i + 1}.", Modifier.width(28.dp))
+                        OutlinedTextField(
+                            value = row.seconds,
+                            onValueChange = { row.seconds = it },
+                            label = { Text(if (music) "Min." else "Sek.") },
+                            isError = parsed[i] == null,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.width(84.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = row.name,
+                            onValueChange = { row.name = it },
+                            label = { Text(if (music) "Was du spielst, z. B. Phrygisch" else "Übung (optional)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Column {
+                            TextButton(
+                                onClick = { rows.add(i - 1, rows.removeAt(i)) },
+                                enabled = i > 0,
+                            ) { Text("↑") }
+                            TextButton(onClick = { rows.removeAt(i) }) { Text("✕") }
+                        }
                     }
+                    if (music) StepSound(row)
                 }
             }
             item {
                 Text("Intervall hinzufügen", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(10, 15, 20, 30, 45, 60, 90, 120).forEach { secs ->
-                        FilledTonalButton(onClick = { addRow(secs) }) { Text(formatDuration(secs)) }
+                    (if (music) listOf(60, 120, 180, 300, 600, 1200) else listOf(10, 15, 20, 30, 45, 60, 90, 120)).forEach { secs ->
+                        FilledTonalButton(onClick = { addRow(secs) }) { Text(if (music) "${secs / 60} min" else formatDuration(secs)) }
                     }
                     OutlinedButton(
                         onClick = { parsed.lastOrNull()?.let { addRow(it, rows.last().name) } },
                         enabled = parsed.lastOrNull() != null,
                     ) { Text("Letztes wiederholen") }
+                }
+            }
+            if (music) {
+                item {
+                    Text("Klang der Drone", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DroneSound.entries.forEach { s ->
+                            FilterChip(selected = sound == s, onClick = { sound = s }, label = { Text(s.label) })
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = fifth, onCheckedChange = { fifth = it })
+                        Spacer(Modifier.width(8.dp))
+                        Text("Quinte dazu (aus für Lokrisch & Co.)")
+                    }
+                    Text("Drumset", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DrumKit.entries.forEach { k ->
+                            FilterChip(selected = kit == k, onClick = { kit = k }, label = { Text(k.label) })
+                        }
+                    }
                 }
             }
             item {
@@ -345,7 +466,7 @@ private fun EditorScreen(
                         endless -> "Eine Runde: ${formatDuration(round)}, wiederholt bis Stopp"
                         rounds != null && rounds > 1 -> "Gesamt: ${formatDuration(round * rounds)} ($rounds × ${formatDuration(round)})"
                         else -> "Gesamt: ${formatDuration(round)}"
-                    } + " · Eingabe als Sekunden oder m:ss",
+                    } + if (music) " · Eingabe in Minuten oder m:ss" else " · Eingabe als Sekunden oder m:ss",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
@@ -377,7 +498,54 @@ private fun EditorScreen(
     }
 }
 
+/** Drone, drums and tempo of one music interval. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StepSound(row: EditRow) {
+    FlowRow(
+        Modifier.padding(start = 28.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Picker("Drone", row.drone, listOf(null) + (0 until 12), { it?.let { NOTE_NAMES[it] } ?: "aus" }) { row.drone = it }
+        Picker(
+            "Drums", row.groove, listOf(null) + Grooves.all.map { it.name },
+            { g -> g?.let { "$it (${Grooves.named(it).meter.label})" } ?: "aus" },
+        ) { row.groove = it }
+        if (row.groove != null) {
+            OutlinedTextField(
+                value = row.bpm,
+                onValueChange = { row.bpm = it },
+                label = { Text("BPM") },
+                isError = row.parsedBpm == null,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.width(84.dp),
+            )
+        }
+    }
+}
+
+/** A button showing "[label]: value" that opens a menu of [options]. */
+@Composable
+private fun <T> Picker(label: String, value: T, options: List<T>, text: (T) -> String, onPick: (T) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { open = true }) { Text("$label: ${text(value)}") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(text(option)) }, onClick = {
+                    onPick(option)
+                    open = false
+                })
+            }
+        }
+    }
+}
+
 // --- run --------------------------------------------------------------------
+
+private const val MUSIC_HINT = "Bei jedem Wechsel blendet der Ton weich über und es kommt das gewohnte Signal."
 
 @Composable
 private fun RunScreen(run: RunState, engine: TimerEngine, hint: String) {
@@ -411,19 +579,29 @@ private fun RunScreen(run: RunState, engine: TimerEngine, hint: String) {
                 .filter { it.isNotBlank() }.joinToString(" · "),
             style = MaterialTheme.typography.titleMedium,
         )
-        if (step.name.isNotBlank()) {
+        val music = run.session.music
+        if (music) {
+            // What to play is the headline; the clock steps back.
+            if (step.name.isNotBlank()) {
+                Text(step.name, fontSize = 56.sp, fontWeight = FontWeight.Bold, color = Amber, textAlign = TextAlign.Center)
+            }
+            Text(step.soundLabel(), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        } else if (step.name.isNotBlank()) {
             Text(step.name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         }
         Text(
             formatDuration(remaining).removeSuffix(" s"),
-            fontSize = 120.sp,
+            fontSize = if (music && step.name.isNotBlank()) 72.sp else 120.sp,
             fontWeight = FontWeight.Bold,
             color = if (run.paused) MaterialTheme.colorScheme.onSurfaceVariant else Amber,
         )
         val next = run.nextStep
         Text(
-            if (next == null) "Danach: fertig"
-            else "Danach: ${formatDuration(next.seconds)}" + if (next.name.isNotBlank()) " · ${next.name}" else "",
+            when {
+                next == null -> "Danach: fertig"
+                music -> "Danach: ${next.name.ifBlank { next.soundLabel() }} · ${formatDuration(next.seconds)}"
+                else -> "Danach: ${formatDuration(next.seconds)}" + if (next.name.isNotBlank()) " · ${next.name}" else ""
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

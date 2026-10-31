@@ -15,7 +15,13 @@ kotlin {
     }
     jvm("desktop")
 
+    applyDefaultHierarchyTemplate()
+
     sourceSets {
+        // Android and desktop both run on the JVM: the audio thread and the drum samples live here once.
+        val jvmCommonMain by creating { dependsOn(commonMain.get()) }
+        named("desktopMain") { dependsOn(jvmCommonMain) }
+        androidMain { dependsOn(jvmCommonMain) }
         commonMain.dependencies {
             api(compose.runtime)
             api(compose.foundation)
