@@ -27,6 +27,30 @@ class TimerEngineTest {
     }
 
     @Test
+    fun vibrationLengthIsAdjustable() {
+        // 1 s is the buzz from before the setting existed.
+        assertTrue(longArrayOf(0, 350, 150, 350).contentEquals(vibrationPattern(1, Buzz.STEP)))
+        assertTrue(longArrayOf(0, 600, 200, 600, 200, 600).contentEquals(vibrationPattern(1, Buzz.FINISH)))
+        for (secs in VIBRATION_CHOICES.filter { it > 0 }) {
+            val step = vibrationPattern(secs, Buzz.STEP).sum()
+            assertTrue(step in secs * 1000L - 500..secs * 1000L, "$secs s lasts $step ms")
+            assertTrue(vibrationPattern(secs, Buzz.FINISH).sum() > step)
+        }
+        assertEquals(0, vibrationPattern(0, Buzz.STEP).size)
+        assertEquals(0, vibrationPattern(0, Buzz.START).size)
+
+        var saved: String? = null
+        val store = SessionStore(object : SessionStorage {
+            override fun read() = saved
+            override fun write(json: String) { saved = json }
+        })
+        store.save(listOf(twoSteps.copy(vibration = 5)))
+        assertEquals(5, store.load().single().vibration)
+        saved = saved!!.replace(",\"vibration\":5", "")
+        assertEquals(1, store.load().single().vibration, "sessions saved before the setting buzz 1 s")
+    }
+
+    @Test
     fun presetsAndSummaries() {
         val (breathing, pomodoro, every5) = presets()
         assertEquals(5 * 60, breathing.totalSeconds)

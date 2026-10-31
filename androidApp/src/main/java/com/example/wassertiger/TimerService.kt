@@ -76,19 +76,20 @@ class TimerService : Service() {
     private fun onTimerEvent(event: TimerEvent, state: RunState) {
         music.follow(state.takeIf { event != TimerEvent.Stopped })
         when (event) {
-            TimerEvent.Started -> vibrate(PATTERN_START)
+            TimerEvent.Started -> vibrate(state, Buzz.START)
             TimerEvent.Step -> {
                 cpuLock?.acquire(CPU_LOCK_MS) // endless sessions may run past the initial timeout
-                vibrate(PATTERN_STEP)
+                vibrate(state, Buzz.STEP)
                 wakeScreen(state)
                 notifications.notify(ID_ONGOING, ongoingNotification())
             }
             TimerEvent.PauseChanged -> notifications.notify(ID_ONGOING, ongoingNotification())
             TimerEvent.Finished -> {
-                vibrate(PATTERN_FINISH)
+                val buzzMs = vibrate(state, Buzz.FINISH)
                 wakeScreen(state)
                 scope.launch {
-                    delay(3000) // let the final vibration and flash complete before releasing locks
+                    // Let the final vibration and flash complete before releasing locks.
+                    delay(maxOf(3000L, buzzMs + 500))
                     shutdown()
                 }
             }
@@ -113,7 +114,10 @@ class TimerService : Service() {
 
     // --- signalling -------------------------------------------------------
 
-    private fun vibrate(pattern: LongArray) {
+    /** Buzzes as long as the session asks for; returns how long that takes in ms. */
+    private fun vibrate(state: RunState, buzz: Buzz): Long {
+        val pattern = vibrationPattern(state.session.vibration, buzz)
+        if (pattern.isEmpty()) return 0
         val vibrator = if (Build.VERSION.SDK_INT >= 31) {
             getSystemService(VibratorManager::class.java).defaultVibrator
         } else {
@@ -131,6 +135,7 @@ class TimerService : Service() {
                 AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(),
             )
         }
+        return pattern.sum()
     }
 
     /**
@@ -241,10 +246,6 @@ class TimerService : Service() {
         private const val ID_ONGOING = 1
         private const val ID_FLASH = 2
         private const val CPU_LOCK_MS = 4 * 60 * 60 * 1000L
-
-        private val PATTERN_START = longArrayOf(0, 200)
-        private val PATTERN_STEP = longArrayOf(0, 350, 150, 350)
-        private val PATTERN_FINISH = longArrayOf(0, 600, 200, 600, 200, 600)
 
         /** Process-wide, so the UI and the service see the same run. */
         val engine = TimerEngine(MainScope())

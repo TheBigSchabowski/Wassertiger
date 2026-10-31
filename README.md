@@ -18,7 +18,7 @@ legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie
 
 | Plattform | Signal beim Wechsel |
 |---|---|
-| Android | Vibration + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |
+| Android | Vibration (Dauer pro Session: aus, 1–8 s) + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |
 | macOS / Linux | Hinweisfenster über allen Fenstern, ohne den Fokus zu stehlen; Bildschirm bleibt während der Session an |
 
 ## Musik

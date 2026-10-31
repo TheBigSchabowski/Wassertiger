@@ -330,6 +330,7 @@ private fun EditorScreen(
     var sound by remember { mutableStateOf(initial.sound) }
     var fifth by remember { mutableStateOf(initial.fifth) }
     var kit by remember { mutableStateOf(initial.kit) }
+    var vibration by remember { mutableStateOf(initial.vibration) }
     val music = initial.music
     // Music intervals run for minutes, so they are typed in minutes.
     fun durationText(seconds: Int) = if (music) formatMinutes(seconds) else seconds.toString()
@@ -360,6 +361,7 @@ private fun EditorScreen(
         sound = sound,
         fifth = fifth,
         kit = kit,
+        vibration = vibration,
     )
     var templateSaved by remember { mutableStateOf(false) }
 
@@ -469,6 +471,23 @@ private fun EditorScreen(
                     } + if (music) " · Eingabe in Minuten oder m:ss" else " · Eingabe als Sekunden oder m:ss",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
+                )
+                Text("Vibration beim Wechsel", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Keep a length set some other way selectable instead of silently dropping it.
+                    (VIBRATION_CHOICES + vibration).distinct().sorted().forEach { secs ->
+                        FilterChip(
+                            selected = vibration == secs,
+                            onClick = { vibration = secs },
+                            label = { Text(if (secs == 0) "Aus" else "$secs s") },
+                        )
+                    }
+                }
+                Text(
+                    if (vibration == 0) "Kein Vibrieren – nur das Display geht an." else "Am Ende eine Sekunde länger.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
                 )
                 if (!initial.template) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
