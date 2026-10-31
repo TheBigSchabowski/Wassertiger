@@ -1,6 +1,7 @@
 # Wassertiger
 
-Intervall-Timer für Android, macOS und Linux. Eine **Session** ist eine frei konfigurierbare Liste von
+Intervall-Timer für Android, macOS und Linux – mit einer zweiten Seite zum Üben mit Drone und
+Schlagzeug (siehe [Musik](#musik)). Eine **Session** ist eine frei konfigurierbare Liste von
 Intervallen (z. B. 15 s, 15 s, 30 s, 30 s, 1:00, 48 s). Bei jedem Wechsel gibt es ein kurzes Signal –
 **ohne Ton**, damit Spotify & Co. ungestört weiterlaufen.
 
@@ -20,9 +21,30 @@ legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie
 | Android | Vibration + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |
 | macOS / Linux | Hinweisfenster über allen Fenstern, ohne den Fokus zu stehlen; Bildschirm bleibt während der Session an |
 
+## Musik
+
+Nach links wischen (am Computer **→**, zurück mit **←**, oder die Reiter oben) führt zur Musik-Seite.
+Musik-Sessions sind dieselben Intervalle, nur dass jedes Intervall etwas spielt:
+
+- **Drone** auf einem der 12 Grundtöne (oder aus), Klang Sinus / Orgel / Fläche / Tanpura, Quinte dazu
+- **Drums** mit einem der 17 Grooves (Rock, Straight 16, Funk, Shuffle, Bossa, Walzer, 6/8 …) im
+  gewählten Tempo (oder aus), Drumset Akustik / Synth / 808 / Besen / Cajón / Nur Klick
+- **Was du spielst** („Phrygisch“, „16tel“) – steht beim Üben groß auf dem Bildschirm und im Hinweis
+  beim Wechsel
+
+Nur Drone, nur Drums, beides oder Stille geht. Dauer in Minuten („20“) oder m:ss. Runden, Endlos und
+eigene Vorlagen funktionieren wie beim Timer. Vorlagen: A-Drone Phrygisch (20 min), Modi über A
+(7 × 3 min, ohne Quinte), 16tel-Groove, Notenwerte (Achtel → 16tel → Triolen), Drone + Groove.
+
+Drone und Drum-Machine stammen aus [Widder](https://github.com/TheBigSchabowski/widder) (dort aus
+NicheLooper). Die Akustik-Samples (`shared/src/jvmCommonMain/resources/drums`) sind aus dem
+Hydrogen-Drumkit „The Black Pearl 1.0“ von Glen MacArthur und stehen unter der GPL, siehe
+`drums/ATTRIBUTION.txt`.
+
 ## Aufbau
 
-- `shared` – Kotlin Multiplatform: Datenmodell, `TimerEngine`, komplette Compose-Oberfläche
+- `shared` – Kotlin Multiplatform: Datenmodell, `TimerEngine`, `MusicEngine` (Drone + Drums), komplette
+  Compose-Oberfläche; `jvmCommonMain` hat den Audio-Thread und die Drum-Samples
 - `androidApp` – Foreground-Service, Vibration, Full-Screen-Intent zum Wecken des Displays
 - `desktopApp` – Compose Desktop für macOS und Linux
 

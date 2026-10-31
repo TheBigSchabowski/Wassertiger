@@ -24,8 +24,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Keeps [engine] running in the foreground so it keeps counting with the screen off.
- * It never requests audio focus and plays no sound, so music apps keep playing;
- * step changes are signalled only by vibration and by briefly turning the screen on.
+ * It never requests audio focus, so music apps keep playing; step changes are signalled by
+ * vibration and by briefly turning the screen on. Only music sessions sound: their drone and
+ * drums come from [music].
  */
 class TimerService : Service() {
 
@@ -73,6 +74,7 @@ class TimerService : Service() {
     }
 
     private fun onTimerEvent(event: TimerEvent, state: RunState) {
+        music.follow(state.takeIf { event != TimerEvent.Stopped })
         when (event) {
             TimerEvent.Started -> vibrate(PATTERN_START)
             TimerEvent.Step -> {
@@ -102,6 +104,7 @@ class TimerService : Service() {
     }
 
     override fun onDestroy() {
+        music.stop()
         cpuLock?.takeIf { it.isHeld }?.release()
         engine.listener = { _, _ -> }
         scope.cancel()
@@ -245,6 +248,8 @@ class TimerService : Service() {
 
         /** Process-wide, so the UI and the service see the same run. */
         val engine = TimerEngine(MainScope())
+
+        private val music by lazy { MusicPlayer(LiveStream(::TrackSink)) { DrumSamples.load(::bundledResource) } }
 
         fun start(context: Context, session: Session) = ContextCompat.startForegroundService(
             context,

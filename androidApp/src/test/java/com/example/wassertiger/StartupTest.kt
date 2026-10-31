@@ -1,9 +1,14 @@
 package com.example.wassertiger
 
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
@@ -45,7 +50,19 @@ class StartupTest {
         rule.onNode(hasScrollAction()).performScrollToNode(hasText("Als Vorlage speichern"))
         rule.onNodeWithText("Als Vorlage speichern").performClick()
         rule.onNodeWithText("Abbrechen").performClick()
-        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Meine Vorlagen"))
+        // The pager scrolls too; the list is the vertical one.
+        rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+            .performScrollToNode(hasText("Meine Vorlagen"))
         rule.onNodeWithText("Neu daraus").assertExists()
+    }
+
+    @Test
+    fun swipesToMusic() {
+        rule.onRoot().performTouchInput { swipeLeft() }
+        rule.waitForIdle()
+        rule.onNodeWithText("A-Drone Phrygisch").assertExists()
+        rule.onNodeWithText("A-Drone Phrygisch").performScrollTo().performClick()
+        rule.onNodeWithText("Drone: A").assertExists()
+        rule.onNodeWithText("Drums: aus").assertExists()
     }
 }

@@ -24,7 +24,7 @@ android {
         // turnScreenOn / showWhenLocked on activities need API 27
         minSdk = 27
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = libs.versions.app.get()
     }
 
