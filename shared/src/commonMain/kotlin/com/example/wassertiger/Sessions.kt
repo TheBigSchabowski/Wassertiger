@@ -40,7 +40,7 @@ const val ENDLESS = 0
  * One run ("Lauf"): an ordered list of intervals, played [rounds] times ([ENDLESS] = until stopped).
  * A [template] is a user-made preset: listed separately and only copied, never started itself.
  * A [music] session lives on the music page and sounds: its drone in [sound] (with the [fifth]),
- * its drums on [kit].
+ * its drums on [kit]. At every interval change the phone buzzes for [vibration] seconds (0 = never).
  */
 data class Session(
     val id: String = newId(),
@@ -52,6 +52,7 @@ data class Session(
     val sound: DroneSound = DroneSound.ORGAN,
     val fifth: Boolean = true,
     val kit: DrumKit = DrumKit.ACOUSTIC,
+    val vibration: Int = 1,
 ) {
     fun musicSettings(step: Step) = MusicSettings(
         root = step.drone ?: 9,
@@ -69,6 +70,34 @@ data class Session(
     val roundSeconds: Int get() = steps.sumOf { it.seconds }
     /** Length of the whole run, null when [endless]. */
     val totalSeconds: Int? get() = if (endless) null else roundSeconds * rounds
+}
+
+/** The lengths the editor offers for [Session.vibration], in seconds; 0 = off. */
+val VIBRATION_CHOICES = listOf(0, 1, 2, 3, 5, 8)
+
+/** What happens a vibration is for: the run starts, the interval changes, the run is over. */
+enum class Buzz { START, STEP, FINISH }
+
+/**
+ * Off/on waveform in ms (as Android's VibrationEffect takes it) for [buzz] when the session buzzes
+ * for [seconds]: pulses rather than one long hum, since the start of each pulse is what you feel.
+ * The end of the run buzzes a second longer in heavier pulses; the start is a short tap. Empty for 0.
+ */
+fun vibrationPattern(seconds: Int, buzz: Buzz): LongArray {
+    if (seconds <= 0) return LongArray(0)
+    val (on, off, total) = when (buzz) {
+        Buzz.START -> return longArrayOf(0, 200)
+        Buzz.STEP -> Triple(350L, 150L, seconds * 1000L)
+        Buzz.FINISH -> Triple(600L, 200L, (seconds + 1) * 1000L)
+    }
+    val pattern = mutableListOf(0L)
+    var t = 0L
+    while (t < total) {
+        if (pattern.size > 1) pattern += off
+        pattern += on
+        t += on + off
+    }
+    return pattern.toLongArray()
 }
 
 /** Ready-made sessions offered as templates; each call hands out fresh ids. */
@@ -183,6 +212,7 @@ class SessionStore(private val storage: SessionStorage) {
                 sound = o["sound"]?.jsonPrimitive?.content.let { n -> DroneSound.entries.firstOrNull { it.name == n } } ?: DroneSound.ORGAN,
                 fifth = o["fifth"]?.jsonPrimitive?.boolean ?: true,
                 kit = o["kit"]?.jsonPrimitive?.content.let { n -> DrumKit.entries.firstOrNull { it.name == n } } ?: DrumKit.ACOUSTIC,
+                vibration = o["vibration"]?.jsonPrimitive?.int ?: 1,
             )
         }
     }
@@ -199,6 +229,7 @@ class SessionStore(private val storage: SessionStorage) {
                     put("sound", session.sound.name)
                     put("fifth", session.fifth)
                     put("kit", session.kit.name)
+                    put("vibration", session.vibration)
                     put("steps", buildJsonArray {
                         session.steps.forEach { step ->
                             add(buildJsonObject {
