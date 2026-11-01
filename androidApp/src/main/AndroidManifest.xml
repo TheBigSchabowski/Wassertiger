@@ -38,6 +38,40 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.Wassertiger.Flash" />
 
+        <activity
+            android:name=".SessionWidgetConfigActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".SessionsWidget"
+            android:exported="false"
+            android:label="@string/widget_sessions_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_sessions_info" />
+        </receiver>
+
+        <receiver
+            android:name=".SessionWidget"
+            android:exported="false"
+            android:label="@string/widget_session_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_session_info" />
+        </receiver>
+
         <service
             android:name=".TimerService"
             android:exported="false"

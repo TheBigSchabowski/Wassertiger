@@ -24,7 +24,7 @@ android {
         // turnScreenOn / showWhenLocked on activities need API 27
         minSdk = 27
         targetSdk = 36
-        versionCode = 4
+        versionCode = 5
         versionName = libs.versions.app.get()
     }
 
@@ -58,6 +58,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    // Home-screen widget lists on every API level (RemoteCollectionItems is native only from 31).
+    implementation(libs.androidx.core.remoteviews)
 
     // Startup smoke test (./gradlew :androidApp:testDebugUnitTest), runs without a device.
     testImplementation("junit:junit:4.13.2")
