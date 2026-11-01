@@ -21,6 +21,18 @@ legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie
 | Android | Vibration (Dauer pro Session: aus, 1–8 s) + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |
 | macOS / Linux | Hinweisfenster über allen Fenstern, ohne den Fokus zu stehlen; Bildschirm bleibt während der Session an |
 
+## Widgets (Android)
+
+Zwei Widgets für den Startbildschirm (lange auf den Startbildschirm tippen → Widgets → Wassertiger):
+
+- **Wassertiger-Sessions** – alle Sessions (Timer und ♪ Musik) als Liste, ein Tipp startet sofort, ohne
+  die App zu öffnen. Läuft eine Session, stehen oben Restzeit, Intervall sowie Pause/Weiter,
+  Überspringen und Stopp.
+- **Wassertiger-Session** – eine einzelne Session als Kachel; welche, wird beim Platzieren gewählt
+  (lange drücken → bearbeiten wählt neu). Während sie läuft, zählt die Kachel herunter.
+
+Änderungen in der App erscheinen sofort in den Widgets.
+
 ## Musik
 
 Nach links wischen (am Computer **→**, zurück mit **←**, oder die Reiter oben) führt zur Musik-Seite.
@@ -45,7 +57,7 @@ Hydrogen-Drumkit „The Black Pearl 1.0“ von Glen MacArthur und stehen unter d
 
 - `shared` – Kotlin Multiplatform: Datenmodell, `TimerEngine`, `MusicEngine` (Drone + Drums), komplette
   Compose-Oberfläche; `jvmCommonMain` hat den Audio-Thread und die Drum-Samples
-- `androidApp` – Foreground-Service, Vibration, Full-Screen-Intent zum Wecken des Displays
+- `androidApp` – Foreground-Service, Vibration, Full-Screen-Intent zum Wecken des Displays, Widgets
 - `desktopApp` – Compose Desktop für macOS und Linux
 
 ## Bauen

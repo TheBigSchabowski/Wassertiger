@@ -39,10 +39,15 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 
 fun sessionStore(context: Context): SessionStore {
-    val prefs = context.getSharedPreferences("sessions", Context.MODE_PRIVATE)
+    val app = context.applicationContext
+    val prefs = app.getSharedPreferences("sessions", Context.MODE_PRIVATE)
     return SessionStore(object : SessionStorage {
         override fun read(): String? = prefs.getString("sessions_v1", null)
-        override fun write(json: String) = prefs.edit().putString("sessions_v1", json).apply()
+        override fun write(json: String) {
+            prefs.edit().putString("sessions_v1", json).apply()
+            // The home-screen widgets list the sessions, so they follow every edit.
+            Widgets.update(app)
+        }
     })
 }
 

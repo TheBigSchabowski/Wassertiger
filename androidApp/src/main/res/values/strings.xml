@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">Wassertiger</string>
+    <string name="widget_sessions_label">Wassertiger-Sessions</string>
+    <string name="widget_sessions_description">Alle Sessions – ein Tipp startet. Läuft eine, stehen Restzeit, Pause und Stopp oben.</string>
+    <string name="widget_session_label">Wassertiger-Session</string>
+    <string name="widget_session_description">Eine Session als Kachel: ein Tipp startet sie.</string>
+    <string name="widget_empty">Noch keine Sessions – in der App anlegen.</string>
+    <string name="widget_start">Starten</string>
+    <string name="widget_pause">Pause</string>
+    <string name="widget_resume">Weiter</string>
+    <string name="widget_skip">Überspringen</string>
+    <string name="widget_stop">Stopp</string>
 </resources>

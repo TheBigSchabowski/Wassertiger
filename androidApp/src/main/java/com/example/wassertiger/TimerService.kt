@@ -95,6 +95,7 @@ class TimerService : Service() {
             }
             TimerEvent.Stopped -> shutdown()
         }
+        Widgets.update(this)
     }
 
     private fun shutdown() {
@@ -230,17 +231,14 @@ class TimerService : Service() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    private fun servicePendingIntent(action: String): PendingIntent = PendingIntent.getService(
-        this, action.hashCode(), Intent(this, TimerService::class.java).setAction(action),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
+    private fun servicePendingIntent(action: String): PendingIntent = actionPendingIntent(this, action)
 
     companion object {
         private const val ACTION_START = "start"
-        private const val ACTION_TOGGLE_PAUSE = "pause"
-        private const val ACTION_SKIP = "skip"
-        private const val ACTION_STOP = "stop"
-        private const val EXTRA_SESSION_ID = "session"
+        const val ACTION_TOGGLE_PAUSE = "pause"
+        const val ACTION_SKIP = "skip"
+        const val ACTION_STOP = "stop"
+        const val EXTRA_SESSION_ID = "session"
         private const val CHANNEL_ONGOING = "ongoing"
         private const val CHANNEL_FLASH = "flash"
         private const val ID_ONGOING = 1
@@ -252,9 +250,25 @@ class TimerService : Service() {
 
         private val music by lazy { MusicPlayer(LiveStream(::TrackSink)) { DrumSamples.load(::bundledResource) } }
 
-        fun start(context: Context, session: Session) = ContextCompat.startForegroundService(
-            context,
-            Intent(context, TimerService::class.java).setAction(ACTION_START).putExtra(EXTRA_SESSION_ID, session.id),
+        fun start(context: Context, session: Session) =
+            ContextCompat.startForegroundService(context, startIntent(context).putExtra(EXTRA_SESSION_ID, session.id))
+
+        /** Starts the session named by [EXTRA_SESSION_ID], which the caller (or a fill-in intent) adds. */
+        fun startIntent(context: Context): Intent = Intent(context, TimerService::class.java).setAction(ACTION_START)
+
+        /**
+         * Starts the session [sessionId] from a widget tap. A tap on a widget may start a foreground
+         * service from the background, so this works with the app closed.
+         */
+        fun startPendingIntent(context: Context, sessionId: String): PendingIntent = PendingIntent.getForegroundService(
+            context, sessionId.hashCode(), startIntent(context).putExtra(EXTRA_SESSION_ID, sessionId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        /** Pause/skip/stop for the running session, from the notification or a widget. */
+        fun actionPendingIntent(context: Context, action: String): PendingIntent = PendingIntent.getService(
+            context, action.hashCode(), Intent(context, TimerService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
 }
