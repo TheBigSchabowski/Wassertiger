@@ -16,8 +16,17 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
+import com.sun.net.httpserver.HttpServer
 import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.URI
+import java.net.URLDecoder
+import java.net.URLEncoder
 import javax.imageio.ImageIO
+import javax.swing.SwingUtilities
 
 private val isMac = System.getProperty("os.name").startsWith("Mac")
 
@@ -71,7 +80,73 @@ private class StayAwake {
 
 private data class Flash(val title: String, val text: String, val finished: Boolean)
 
-fun main() = application {
+private data class PracticeRequest(val seconds: Int, val title: String?)
+
+/**
+ * Receives practice timers from MetalRat on 127.0.0.1:[Practice.PORT] (POST /practice?seconds=&title=).
+ * Requests from web pages carry an Origin header and are refused.
+ */
+private class PracticeServer {
+    @Volatile var onPractice: (PracticeRequest) -> Unit = {}
+
+    fun bind(): Boolean = try {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), Practice.PORT), 0)
+        server.createContext("/practice") { exchange ->
+            try {
+                val params = queryParams(exchange.requestURI.rawQuery)
+                val seconds = params["seconds"]?.toIntOrNull()
+                val code = when {
+                    exchange.requestHeaders.getFirst("Origin") != null -> 403
+                    exchange.requestMethod != "POST" || seconds == null -> 400
+                    else -> 204.also {
+                        val request = PracticeRequest(seconds, params["title"])
+                        SwingUtilities.invokeLater { onPractice(request) }
+                    }
+                }
+                exchange.sendResponseHeaders(code, -1)
+            } finally {
+                exchange.close()
+            }
+        }
+        server.start()
+        true
+    } catch (e: IOException) {
+        false
+    }
+
+    companion object {
+        fun queryParams(raw: String?): Map<String, String> = raw.orEmpty().split('&').filter { '=' in it }.associate {
+            URLDecoder.decode(it.substringBefore('='), "UTF-8") to URLDecoder.decode(it.substringAfter('='), "UTF-8")
+        }
+
+        /** Hands [request] to the Wassertiger that is already running. */
+        fun forward(request: PracticeRequest): Boolean = runCatching {
+            val query = "seconds=${request.seconds}" + (request.title?.let { "&title=" + URLEncoder.encode(it, "UTF-8") } ?: "")
+            val conn = URI("http://127.0.0.1:${Practice.PORT}/practice?$query").toURL().openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 1500
+            conn.readTimeout = 1500
+            conn.responseCode.also { conn.disconnect() } == 204
+        }.getOrDefault(false)
+    }
+}
+
+private fun practiceFromArgs(args: Array<String>): PracticeRequest? {
+    val seconds = args.indexOf(Practice.ARG_SECONDS).takeIf { it >= 0 }?.let { args.getOrNull(it + 1)?.toIntOrNull() }
+        ?: return null
+    val title = args.indexOf(Practice.ARG_TITLE).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
+    return PracticeRequest(seconds, title)
+}
+
+fun main(args: Array<String>) {
+    val initialPractice = practiceFromArgs(args)
+    val server = PracticeServer()
+    // Port taken = Wassertiger already runs: pass the timer on instead of opening a second window.
+    if (!server.bind() && initialPractice != null && PracticeServer.forward(initialPractice)) return
+    runApp(server, initialPractice)
+}
+
+private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = application {
     val store = remember { SessionStore(FileStorage) }
     val engine = remember { TimerEngine(MainScope()) }
     val stayAwake = remember { StayAwake() }
@@ -96,6 +171,8 @@ fun main() = application {
                 TimerEvent.PauseChanged -> {}
             }
         }
+        server.onPractice = { engine.start(Practice.session(it.seconds, it.title)) }
+        initialPractice?.let { server.onPractice(it) }
     }
 
     Window(

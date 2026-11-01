@@ -38,6 +38,20 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.Wassertiger.Flash" />
 
+        <!-- "Üben" from MetalRat: starts a practice timer in the background, opens the video, closes. -->
+        <activity
+            android:name=".PracticeActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Wassertiger.Invisible">
+            <intent-filter>
+                <action android:name="com.example.wassertiger.action.PRACTICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".SessionWidgetConfigActivity"
             android:exported="true"

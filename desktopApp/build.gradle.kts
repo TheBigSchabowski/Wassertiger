@@ -34,7 +34,8 @@ compose.desktop {
             packageVersion = libs.versions.app.get()
             description = "Wassertiger – Intervall-Timer, der bei jedem Wechsel kurz aufleuchtet"
             vendor = "TheBigSchabowski"
-            modules("java.desktop")
+            // jdk.httpserver: receives practice timers from MetalRat.
+            modules("java.desktop", "jdk.httpserver")
             macOS {
                 bundleID = "com.example.wassertiger"
                 iconFile.set(project.file("icon.icns"))

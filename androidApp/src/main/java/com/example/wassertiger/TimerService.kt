@@ -48,6 +48,9 @@ class TimerService : Service() {
                 val session = intent.getStringExtra(EXTRA_SESSION_ID)?.let { sessionStore(this).get(it) }
                 if (session == null || session.steps.isEmpty()) stopSelf() else start(session)
             }
+            ACTION_PRACTICE -> start(
+                Practice.session(intent.getIntExtra(Practice.EXTRA_SECONDS, 300), intent.getStringExtra(Practice.EXTRA_TITLE)),
+            )
             ACTION_TOGGLE_PAUSE -> engine.togglePause()
             ACTION_SKIP -> engine.skip()
             ACTION_STOP -> engine.stop()
@@ -235,6 +238,7 @@ class TimerService : Service() {
 
     companion object {
         private const val ACTION_START = "start"
+        private const val ACTION_PRACTICE = "practice"
         const val ACTION_TOGGLE_PAUSE = "pause"
         const val ACTION_SKIP = "skip"
         const val ACTION_STOP = "stop"
@@ -252,6 +256,14 @@ class TimerService : Service() {
 
         fun start(context: Context, session: Session) =
             ContextCompat.startForegroundService(context, startIntent(context).putExtra(EXTRA_SESSION_ID, session.id))
+
+        /** A one-interval practice timer that is not stored as a session (see [Practice]). */
+        fun startPractice(context: Context, seconds: Int, title: String?) = ContextCompat.startForegroundService(
+            context,
+            Intent(context, TimerService::class.java).setAction(ACTION_PRACTICE)
+                .putExtra(Practice.EXTRA_SECONDS, seconds)
+                .putExtra(Practice.EXTRA_TITLE, title),
+        )
 
         /** Starts the session named by [EXTRA_SESSION_ID], which the caller (or a fill-in intent) adds. */
         fun startIntent(context: Context): Intent = Intent(context, TimerService::class.java).setAction(ACTION_START)
