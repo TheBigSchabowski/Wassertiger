@@ -73,8 +73,11 @@ class MainActivity : ComponentActivity() {
                         }
                         TimerService.start(context, session)
                     },
-                    runHint = "Du kannst das Handy sperren und Musik hören –\n" +
-                        "bei jedem Wechsel vibriert es und das Display geht kurz an.",
+                    runHint = { session ->
+                        "Du kannst das Handy sperren und Musik hören –\n" + session.signalText() +
+                            "\nDie Power-Taste zeigt die Restzeit auch bei gesperrtem Handy."
+                    },
+                    onPreviewChime = TimerService.chimes::play,
                     header = { PermissionHints() },
                 )
             }

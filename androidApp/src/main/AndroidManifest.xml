@@ -25,13 +25,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Shown over the lock screen for ~2 s at every step change, then
-             finishes. Own task so it never drags MainActivity to the front. -->
+        <!-- Flashes over the lock screen at every step change, then stays there as a
+             countdown (the power button shows it) until unlocked or the session ends.
+             Own task so it never drags MainActivity to the front. -->
         <activity
             android:name=".FlashActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:taskAffinity=""

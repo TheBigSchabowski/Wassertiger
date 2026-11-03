@@ -1,6 +1,12 @@
 package com.example.wassertiger
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -60,7 +66,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -70,7 +78,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.ceil
 
 val Amber = Color(0xFFFFB300)
-val DoneGreen = Color(0xFF43A047)
+const val DONE_GREEN_RGB = 0x43A047
+val DoneGreen = Color(0xFF000000 or DONE_GREEN_RGB.toLong())
 
 /** Lets Android route the system back gesture to the editor; a no-op on desktop. */
 @Composable
@@ -88,7 +97,8 @@ fun WassertigerTheme(content: @Composable () -> Unit) {
  * with drone and drums.
  *
  * @param onStart starts [session] on the platform (Android goes through its foreground service).
- * @param runHint explains how the platform signals a step change.
+ * @param runHint explains how the platform signals a step change of the session.
+ * @param onPreviewChime plays a chime when it is picked in the editor (finish: the end-of-run triad).
  * @param header platform-specific notices above the session list.
  */
 @Composable
@@ -96,7 +106,8 @@ fun WassertigerApp(
     store: SessionStore,
     engine: TimerEngine,
     onStart: (Session) -> Unit,
-    runHint: String,
+    runHint: (Session) -> String,
+    onPreviewChime: (chime: Chime, finish: Boolean) -> Unit = { _, _ -> },
     header: @Composable () -> Unit = {},
 ) {
     val run by engine.state.collectAsState()
@@ -129,10 +140,11 @@ fun WassertigerApp(
         val edit = editing
         Box(Modifier.widthIn(max = 720.dp)) {
             when {
-                current != null -> RunScreen(current, engine, if (current.session.music) MUSIC_HINT else runHint)
+                current != null -> RunScreen(current, engine, if (current.session.music) MUSIC_HINT else runHint(current.session))
                 edit != null -> EditorScreen(
                     initial = edit,
                     isNew = sessions.none { it.id == edit.id },
+                    onPreviewChime = onPreviewChime,
                     onSaveAsTemplate = { template ->
                         sessions = sessions + template
                         store.save(sessions)
@@ -192,19 +204,23 @@ fun WassertigerApp(
     }
 }
 
-/** Full-bleed signal shown for a moment at every step change. */
+/** Full-bleed signal in the session's [color] (0xRRGGBB); the end is always green. */
 @Composable
-fun FlashContent(title: String, text: String, finished: Boolean, modifier: Modifier = Modifier) {
+fun FlashContent(title: String, text: String, finished: Boolean, color: Int = AMBER_RGB, modifier: Modifier = Modifier) {
+    val rgb = if (finished) DONE_GREEN_RGB else color
+    val ink = if (isLightColor(rgb)) Color.Black else Color.White
     Column(
-        modifier.fillMaxSize().background(if (finished) DoneGreen else Amber).padding(24.dp),
+        modifier.fillMaxSize().background(rgbColor(rgb)).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         // Music flashes the word to play ("Mixolydisch"), which needs room.
-        Text(title, fontSize = if (title.length > 6) 56.sp else 96.sp, color = Color.Black, textAlign = TextAlign.Center)
-        Text(text, fontSize = 28.sp, color = Color.Black, textAlign = TextAlign.Center)
+        Text(title, fontSize = if (title.length > 6) 56.sp else 96.sp, color = ink, textAlign = TextAlign.Center)
+        Text(text, fontSize = 28.sp, color = ink, textAlign = TextAlign.Center)
     }
 }
+
+fun rgbColor(rgb: Int) = Color(0xFF000000 or (rgb.toLong() and 0xFFFFFF))
 
 // --- list -------------------------------------------------------------------
 
@@ -302,12 +318,64 @@ private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Co
 
 // --- editor -----------------------------------------------------------------
 
+/** What a duration field turns into a colon, since the number pad has none. */
+private val MINUTE_SEPARATORS = Regex("[, ]")
+
+/** Toggles a duration field's [EditRow.minuteMode]. */
+private const val MINUTE_MODE_KEY = '.'
+
+/**
+ * The MM:SS mask of minute mode, filled from the left: "05" → "05", "053" → "05:3", "0530" → "05:30".
+ * The colon appears with the third digit, so deleting never gets stuck on it.
+ */
+fun minuteMask(digits: String): String {
+    val d = digits.filter(Char::isDigit).take(4)
+    return if (d.length <= 2) d else d.take(2) + ":" + d.drop(2)
+}
+
 private class EditRow(val key: Long, seconds: String, name: String, drone: Int? = null, groove: String? = null, bpm: Int = 90) {
-    var seconds by mutableStateOf(seconds)
+    /** The duration field with its cursor, which [typeDuration] keeps in place when it swaps characters. */
+    var duration by mutableStateOf(TextFieldValue(seconds, TextRange(seconds.length)))
+    val seconds: String get() = duration.text
+    /** Digits fill an MM:SS mask from the left, see [minuteMask]. */
+    var minuteMode by mutableStateOf(false)
+
+    /** What gets parsed: in minute mode digits without a colon yet are whole minutes ("05" → 5:00). */
+    val input: String get() = if (minuteMode && seconds.isNotEmpty() && ':' !in seconds) "$seconds:" else seconds
     var name by mutableStateOf(name)
     var drone by mutableStateOf(drone)
     var groove by mutableStateOf(groove)
     var bpm by mutableStateOf(bpm.toString())
+
+    /**
+     * The number pad has a comma but no colon: a comma (or space) becomes one, "5,30" → 5:30. Same
+     * length, so the cursor stays right after it; dropping the composition tells the keyboard the
+     * text changed under it, else it puts the cursor back where it thinks it was.
+     *
+     * A dot switches [minuteMode] on (with an empty field, ready for "0530" → 05:30) or back off; in it,
+     * the field keeps only digits in an MM:SS mask with the cursor at the end.
+     */
+    fun typeDuration(value: TextFieldValue) {
+        var text = value.text
+        val toggled = MINUTE_MODE_KEY in text
+        if (toggled) {
+            text = text.replace(MINUTE_MODE_KEY.toString(), "")
+            minuteMode = !minuteMode
+        }
+        if (minuteMode) {
+            val mask = minuteMask(if (toggled) "" else text)
+            duration = TextFieldValue(mask, TextRange(mask.length))
+            return
+        }
+        // Leaving minute mode: "05" meant minutes, so it keeps meaning them.
+        if (toggled && text.isNotEmpty() && ':' !in text) text += ":"
+        text = text.replace(MINUTE_SEPARATORS, ":")
+        duration = when {
+            toggled -> TextFieldValue(text, TextRange(text.length))
+            text == value.text -> value
+            else -> TextFieldValue(text, value.selection, composition = null)
+        }
+    }
 
     /** The tempo, null when out of range; only asked for with drums. */
     val parsedBpm: Int? get() = bpm.trim().toIntOrNull()?.takeIf { it in MusicSettings.MIN_BPM..MusicSettings.MAX_BPM }
@@ -318,6 +386,7 @@ private class EditRow(val key: Long, seconds: String, name: String, drone: Int? 
 private fun EditorScreen(
     initial: Session,
     isNew: Boolean,
+    onPreviewChime: (Chime, Boolean) -> Unit,
     onSaveAsTemplate: (Session) -> Unit,
     onSave: (Session) -> Unit,
     onDelete: () -> Unit,
@@ -331,9 +400,18 @@ private fun EditorScreen(
     var fifth by remember { mutableStateOf(initial.fifth) }
     var kit by remember { mutableStateOf(initial.kit) }
     var vibration by remember { mutableStateOf(initial.vibration) }
+    var tone by remember { mutableStateOf(initial.tone) }
+    var chime by remember { mutableStateOf(initial.chime) }
+    var flashColor by remember { mutableStateOf(initial.flashColor) }
+    var hexText by remember { mutableStateOf(formatHexColor(initial.flashColor)) }
     val music = initial.music
     // Music intervals run for minutes, so they are typed in minutes.
-    fun durationText(seconds: Int) = if (music) formatMinutes(seconds) else seconds.toString()
+    // Timer intervals are typed in seconds, but anything from a minute up shows as m:ss.
+    fun durationText(seconds: Int) = when {
+        music -> formatMinutes(seconds)
+        seconds >= 60 -> formatDuration(seconds)
+        else -> seconds.toString()
+    }
     var nextKey by remember { mutableLongStateOf(initial.steps.size.toLong()) }
     val rows = remember {
         mutableStateListOf<EditRow>().apply {
@@ -348,7 +426,7 @@ private fun EditorScreen(
         rows.add(EditRow(nextKey++, durationText(seconds), name, last?.drone, last?.groove, last?.parsedBpm ?: 90))
     }
 
-    val parsed = rows.map { if (music) parseMinutes(it.seconds) else parseDuration(it.seconds) }
+    val parsed = rows.map { if (music) parseMinutes(it.seconds) else parseDuration(it.input) }
     val rounds = if (endless) ENDLESS else roundsText.trim().toIntOrNull()?.takeIf { it in 1..999 }
     val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null &&
         rows.all { it.groove == null || it.parsedBpm != null }
@@ -362,6 +440,9 @@ private fun EditorScreen(
         fifth = fifth,
         kit = kit,
         vibration = vibration,
+        tone = tone,
+        chime = chime,
+        flashColor = flashColor,
     )
     var templateSaved by remember { mutableStateOf(false) }
 
@@ -384,9 +465,18 @@ private fun EditorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}.", Modifier.width(28.dp))
                         OutlinedTextField(
-                            value = row.seconds,
-                            onValueChange = { row.seconds = it },
-                            label = { Text(if (music) "Min." else "Sek.") },
+                            value = row.duration,
+                            onValueChange = { row.typeDuration(it) },
+                            label = {
+                                Text(
+                                    when {
+                                        music -> "Min."
+                                        row.minuteMode -> "⏱ Min:Sek"
+                                        ':' in row.seconds -> "Min:Sek"
+                                        else -> "Sek."
+                                    },
+                                )
+                            },
                             isError = parsed[i] == null,
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -468,23 +558,97 @@ private fun EditorScreen(
                         endless -> "Eine Runde: ${formatDuration(round)}, wiederholt bis Stopp"
                         rounds != null && rounds > 1 -> "Gesamt: ${formatDuration(round * rounds)} ($rounds × ${formatDuration(round)})"
                         else -> "Gesamt: ${formatDuration(round)}"
-                    } + if (music) " · Eingabe in Minuten oder m:ss" else " · Eingabe als Sekunden oder m:ss",
+                    } + if (music) " · Eingabe in Minuten oder m:ss" else " · Eingabe in Sekunden; Komma trennt Minuten (5,30 = 5:30), Punkt schaltet auf Minuten-Eingabe (0530 = 5:30)",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
-                Text("Vibration beim Wechsel", style = MaterialTheme.typography.labelLarge)
+                Text("Signal beim Wechsel", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                Text("Vibration", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Keep a length set some other way selectable instead of silently dropping it.
                     (VIBRATION_CHOICES + vibration).distinct().sorted().forEach { secs ->
                         FilterChip(
                             selected = vibration == secs,
                             onClick = { vibration = secs },
-                            label = { Text(if (secs == 0) "Aus" else "$secs s") },
+                            label = { Text(if (secs == 0) "Aus – nur Licht" else "$secs s") },
                         )
                     }
                 }
                 Text(
-                    if (vibration == 0) "Kein Vibrieren – nur das Display geht an." else "Am Ende eine Sekunde länger.",
+                    if (vibration == 0) {
+                        "Kein Vibrieren – das Display leuchtet bei jedem Wechsel 5 Sekunden auf."
+                    } else {
+                        "Am Ende eine Sekunde länger. Das Display geht dazu kurz an."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Leuchtfarbe", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FLASH_COLORS.forEach { (label, rgb) ->
+                        Box(
+                            Modifier.size(36.dp).clip(CircleShape).background(rgbColor(rgb))
+                                .border(
+                                    if (flashColor == rgb) 3.dp else 1.dp,
+                                    if (flashColor == rgb) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                                    CircleShape,
+                                )
+                                .semantics { contentDescription = label }
+                                .clickable {
+                                    flashColor = rgb
+                                    hexText = formatHexColor(rgb)
+                                },
+                        )
+                    }
+                    OutlinedTextField(
+                        value = hexText,
+                        onValueChange = { text ->
+                            hexText = text
+                            parseHexColor(text)?.let { flashColor = it }
+                        },
+                        label = { Text("#Hex") },
+                        isError = parseHexColor(hexText) == null,
+                        singleLine = true,
+                        leadingIcon = { Box(Modifier.size(20.dp).clip(CircleShape).background(rgbColor(flashColor))) },
+                        modifier = Modifier.width(150.dp),
+                    )
+                }
+                Text(
+                    "Bei jedem Wechsel; am Ende leuchtet es grün.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Ton", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ToneMode.entries.forEach { mode ->
+                        FilterChip(selected = tone == mode, onClick = { tone = mode }, label = { Text(mode.label) })
+                    }
+                }
+                if (tone != ToneMode.OFF) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chime.entries.forEach { c ->
+                            FilterChip(
+                                selected = chime == c,
+                                onClick = {
+                                    chime = c
+                                    // Play what this session will sound like: the triad when it only sounds at the end.
+                                    onPreviewChime(c, tone == ToneMode.END)
+                                },
+                                label = { Text(c.label) },
+                            )
+                        }
+                    }
+                }
+                Text(
+                    when (tone) {
+                        ToneMode.OFF -> "Ohne Ton – Spotify & Co. laufen ungestört weiter."
+                        ToneMode.END -> "Am Ende drei Töne aufsteigend. Tippen spielt sie vor."
+                        ToneMode.EVERY -> "Ein Ton bei jedem Wechsel, am Ende drei aufsteigend. Tippen spielt vor."
+                    } + if (tone != ToneMode.OFF) " Musik läuft dabei weiter." else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
@@ -566,8 +730,9 @@ private fun <T> Picker(label: String, value: T, options: List<T>, text: (T) -> S
 
 private const val MUSIC_HINT = "Bei jedem Wechsel blendet der Ton weich über und es kommt das gewohnte Signal."
 
+/** The running session: big countdown and controls. [extra] goes below the controls. */
 @Composable
-private fun RunScreen(run: RunState, engine: TimerEngine, hint: String) {
+fun RunScreen(run: RunState, engine: TimerEngine, hint: String, extra: @Composable () -> Unit = {}) {
     var now by remember { mutableLongStateOf(monotonicMillis()) }
     LaunchedEffect(run) {
         while (true) {
@@ -630,8 +795,9 @@ private fun RunScreen(run: RunState, engine: TimerEngine, hint: String) {
             Button(onClick = engine::togglePause) { Text(if (run.paused) "Weiter" else "Pause") }
             OutlinedButton(onClick = engine::skip) { Text("Überspringen") }
         }
+        extra()
         Spacer(Modifier.height(24.dp))
-        Text(
+        if (hint.isNotEmpty()) Text(
             hint,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
