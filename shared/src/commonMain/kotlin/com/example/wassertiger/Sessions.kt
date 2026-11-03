@@ -40,7 +40,8 @@ const val ENDLESS = 0
  * One run ("Lauf"): an ordered list of intervals, played [rounds] times ([ENDLESS] = until stopped).
  * A [template] is a user-made preset: listed separately and only copied, never started itself.
  * A [music] session lives on the music page and sounds: its drone in [sound] (with the [fifth]),
- * its drums on [kit]. At every interval change the phone buzzes for [vibration] seconds (0 = never).
+ * its drums on [kit]. At every interval change the phone buzzes for [vibration] seconds (0 = never: only the
+ * screen lights up, see [lightOnly]) and, if [tone] says so, sounds its [chime].
  */
 data class Session(
     val id: String = newId(),
@@ -53,6 +54,10 @@ data class Session(
     val fifth: Boolean = true,
     val kit: DrumKit = DrumKit.ACOUSTIC,
     val vibration: Int = 1,
+    val tone: ToneMode = ToneMode.OFF,
+    val chime: Chime = Chime.BEEP,
+    /** Colour of the flash at an interval change, 0xRRGGBB; the end always flashes green. */
+    val flashColor: Int = AMBER_RGB,
 ) {
     fun musicSettings(step: Step) = MusicSettings(
         root = step.drone ?: 9,
@@ -70,6 +75,57 @@ data class Session(
     val roundSeconds: Int get() = steps.sumOf { it.seconds }
     /** Length of the whole run, null when [endless]. */
     val totalSeconds: Int? get() = if (endless) null else roundSeconds * rounds
+
+    /** No vibration: the light is the whole signal, so it stays up longer (see [flashMillis]). */
+    val lightOnly: Boolean get() = vibration == 0
+
+    /** How long the screen lights up at a change. */
+    val flashMillis: Long get() = if (lightOnly) 5000L else 2500L
+
+    /** "vibriert es und das Display geht kurz an. Am Ende ein Gong." – what happens at a change. */
+    fun signalText(): String {
+        val light = if (lightOnly) "leuchtet nur das Display auf, ohne Vibration." else "vibriert es und das Display geht kurz an."
+        val sound = when (tone) {
+            ToneMode.OFF -> ""
+            ToneMode.END -> " Am Ende ertönt ${chime.article()}."
+            ToneMode.EVERY -> " Dazu ertönt ${chime.article()}."
+        }
+        return "bei jedem Wechsel $light$sound"
+    }
+}
+
+private fun Chime.article(): String = when (this) {
+    Chime.BEEP, Chime.GONG, Chime.WOOD -> "ein $label"
+    Chime.BELL -> "eine $label"
+}
+
+const val AMBER_RGB = 0xFFB300
+
+/** Flash colours offered in the editor next to a free #hex field. */
+val FLASH_COLORS = listOf(
+    "Bernstein" to AMBER_RGB, "Aquamarin" to 0x7FFFD4, "Weiß" to 0xFFFFFF,
+    "Rot" to 0xFF3B30, "Pink" to 0xFF4FA3, "Blau" to 0x2F7BFF, "Lila" to 0x9B59FF,
+)
+
+/** "#7FFFD4", "7fffd4" or the short "#7FD" → 0x7FFFD4; null for anything else. */
+fun parseHexColor(text: String): Int? {
+    val hex = text.trim().removePrefix("#")
+    val full = when (hex.length) {
+        3 -> hex.map { "$it$it" }.joinToString("")
+        6 -> hex
+        else -> return null
+    }
+    return full.toIntOrNull(16)
+}
+
+fun formatHexColor(rgb: Int): String = "#" + (rgb and 0xFFFFFF).toString(16).uppercase().padStart(6, '0')
+
+/** Whether black text reads better than white on [rgb]. */
+fun isLightColor(rgb: Int): Boolean {
+    val r = rgb shr 16 and 0xFF
+    val g = rgb shr 8 and 0xFF
+    val b = rgb and 0xFF
+    return 0.299 * r + 0.587 * g + 0.114 * b > 140
 }
 
 /** The lengths the editor offers for [Session.vibration], in seconds; 0 = off. */
@@ -158,10 +214,13 @@ fun parseMinutes(text: String): Int? =
 /** How [parseMinutes] input shows a duration: "20" for whole minutes, else "m:ss". */
 fun formatMinutes(seconds: Int): String = if (seconds % 60 == 0) (seconds / 60).toString() else formatDuration(seconds)
 
-/** Accepts "45", "1:30", "1:00:00" or "90s"; returns null for anything else or <= 0. */
+/**
+ * Accepts "45", "1:30", "1:00:00" or "90s", and "5:" for five minutes (the seconds are still to be
+ * typed); returns null for anything else or <= 0.
+ */
 fun parseDuration(text: String): Int? {
     val t = text.trim().removeSuffix("s").trim()
-    val parts = t.split(":")
+    val parts = t.split(":").let { p -> if (p.size > 1 && p.last().isEmpty()) p.dropLast(1) + "0" else p }
     val secs = when (parts.size) {
         1 -> parts[0].toIntOrNull()
         2 -> {
@@ -213,6 +272,10 @@ class SessionStore(private val storage: SessionStorage) {
                 fifth = o["fifth"]?.jsonPrimitive?.boolean ?: true,
                 kit = o["kit"]?.jsonPrimitive?.content.let { n -> DrumKit.entries.firstOrNull { it.name == n } } ?: DrumKit.ACOUSTIC,
                 vibration = o["vibration"]?.jsonPrimitive?.int ?: 1,
+                // Sessions saved before 1.6.0 stay silent.
+                tone = o["tone"]?.jsonPrimitive?.content.let { n -> ToneMode.entries.firstOrNull { it.name == n } } ?: ToneMode.OFF,
+                chime = o["chime"]?.jsonPrimitive?.content.let { n -> Chime.entries.firstOrNull { it.name == n } } ?: Chime.BEEP,
+                flashColor = o["flashColor"]?.jsonPrimitive?.content?.let(::parseHexColor) ?: AMBER_RGB,
             )
         }
     }
@@ -230,6 +293,9 @@ class SessionStore(private val storage: SessionStorage) {
                     put("fifth", session.fifth)
                     put("kit", session.kit.name)
                     put("vibration", session.vibration)
+                    put("tone", session.tone.name)
+                    put("chime", session.chime.name)
+                    put("flashColor", formatHexColor(session.flashColor))
                     put("steps", buildJsonArray {
                         session.steps.forEach { step ->
                             add(buildJsonObject {

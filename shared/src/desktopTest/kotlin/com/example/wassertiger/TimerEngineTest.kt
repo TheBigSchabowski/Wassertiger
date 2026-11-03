@@ -24,6 +24,14 @@ class TimerEngineTest {
         assertEquals("2:05", formatDuration(125))
         assertEquals("1:00:00", formatDuration(3600))
         assertEquals(1500, parseDuration("25:00"))
+        // A comma in the editor turns into a colon: "5 " is five minutes, "1:30:" an hour and a half.
+        assertEquals(300, parseDuration("5:"))
+        assertEquals(5400, parseDuration("1:30:"))
+        assertNull(parseDuration(":"))
+        assertNull(parseDuration("5::"))
+        // Minute mode: digits fill MM:SS from the left.
+        assertEquals(listOf("", "0", "05", "05:3", "05:30", "25:00", "12:34"), listOf("", "0", "05", "053", "0530", "2500", "123456").map(::minuteMask))
+        assertEquals(330, parseDuration(minuteMask("0530")))
     }
 
     @Test

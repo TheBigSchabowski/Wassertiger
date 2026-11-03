@@ -78,7 +78,7 @@ private class StayAwake {
     }
 }
 
-private data class Flash(val title: String, val text: String, val finished: Boolean)
+private data class Flash(val title: String, val text: String, val finished: Boolean, val millis: Long, val color: Int)
 
 private data class PracticeRequest(val seconds: Int, val title: String?)
 
@@ -151,6 +151,7 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
     val engine = remember { TimerEngine(MainScope()) }
     val stayAwake = remember { StayAwake() }
     val music = remember { MusicPlayer(LiveStream(::LineSink)) { DrumSamples.load(::bundledResource) } }
+    val chimes = remember { ChimePlayer(::LineSink) }
     var flash by remember { mutableStateOf<Flash?>(null) }
     val icon = remember {
         Thread.currentThread().contextClassLoader.getResourceAsStream("icon.png")
@@ -162,9 +163,13 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
             music.follow(state.takeIf { event != TimerEvent.Stopped })
             when (event) {
                 TimerEvent.Started -> stayAwake.start()
-                TimerEvent.Step -> state.flashText().let { (t, s) -> flash = Flash(t, s, false) }
+                TimerEvent.Step -> {
+                    chimes.signal(state.session, finish = false)
+                    state.flashText().let { (t, s) -> flash = Flash(t, s, false, state.session.flashMillis, state.session.flashColor) }
+                }
                 TimerEvent.Finished -> {
-                    state.flashText().let { (t, s) -> flash = Flash(t, s, true) }
+                    chimes.signal(state.session, finish = true)
+                    state.flashText().let { (t, s) -> flash = Flash(t, s, true, state.session.flashMillis, state.session.flashColor) }
                     stayAwake.stop()
                 }
                 TimerEvent.Stopped -> stayAwake.stop()
@@ -190,8 +195,16 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
                 store = store,
                 engine = engine,
                 onStart = engine::start,
-                runHint = "Spotify & Co. laufen ungestört weiter – bei jedem Wechsel leuchtet\n" +
-                    "ein Hinweis über allen Fenstern auf. Der Bildschirm bleibt an.",
+                runHint = { session ->
+                    "Spotify & Co. laufen ungestört weiter – bei jedem Wechsel leuchtet\n" +
+                        "ein Hinweis über allen Fenstern auf. Der Bildschirm bleibt an." +
+                        when (session.tone) {
+                            ToneMode.OFF -> ""
+                            ToneMode.END -> "\nAm Ende ein Ton (${session.chime.label})."
+                            ToneMode.EVERY -> "\nDazu ein Ton (${session.chime.label})."
+                        }
+                },
+                onPreviewChime = chimes::play,
             )
         }
     }
@@ -208,10 +221,10 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
             state = rememberWindowState(position = WindowPosition(Alignment.Center), size = DpSize(560.dp, 340.dp)),
         ) {
             LaunchedEffect(f) {
-                delay(2500)
+                delay(f.millis)
                 flash = null
             }
-            FlashContent(f.title, f.text, f.finished)
+            FlashContent(f.title, f.text, f.finished, f.color)
         }
     }
 }

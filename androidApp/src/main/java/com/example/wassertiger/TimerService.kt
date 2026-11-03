@@ -3,10 +3,13 @@ package com.example.wassertiger
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.os.Build
@@ -25,8 +28,11 @@ import kotlinx.coroutines.launch
 /**
  * Keeps [engine] running in the foreground so it keeps counting with the screen off.
  * It never requests audio focus, so music apps keep playing; step changes are signalled by
- * vibration and by briefly turning the screen on. Only music sessions sound: their drone and
- * drums come from [music].
+ * vibration and by briefly turning the screen on, and by a [chimes] tone if the session wants one.
+ * Music sessions also sound: their drone and drums come from [music].
+ *
+ * While a session runs, turning the screen on over the lock screen shows [FlashActivity]'s big
+ * countdown instead (see [screenOn]).
  */
 class TimerService : Service() {
 
@@ -34,6 +40,16 @@ class TimerService : Service() {
     private var cpuLock: PowerManager.WakeLock? = null
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
     private val power by lazy { getSystemService(PowerManager::class.java) }
+    private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
+
+    /** Power button pressed during a session while locked: put the countdown over the lock screen. */
+    private val screenOn = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val run = engine.state.value
+            if (run != null && !run.finished && keyguard.isKeyguardLocked && !FlashActivity.alive) showClock()
+        }
+    }
+    private var screenOnRegistered = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -74,6 +90,10 @@ class TimerService : Service() {
             setReferenceCounted(false)
             acquire(CPU_LOCK_MS)
         }
+        if (!screenOnRegistered) {
+            ContextCompat.registerReceiver(this, screenOn, IntentFilter(Intent.ACTION_SCREEN_ON), ContextCompat.RECEIVER_NOT_EXPORTED)
+            screenOnRegistered = true
+        }
     }
 
     private fun onTimerEvent(event: TimerEvent, state: RunState) {
@@ -83,16 +103,19 @@ class TimerService : Service() {
             TimerEvent.Step -> {
                 cpuLock?.acquire(CPU_LOCK_MS) // endless sessions may run past the initial timeout
                 vibrate(state, Buzz.STEP)
+                chimes.signal(state.session, finish = false)
                 wakeScreen(state)
                 notifications.notify(ID_ONGOING, ongoingNotification())
             }
             TimerEvent.PauseChanged -> notifications.notify(ID_ONGOING, ongoingNotification())
             TimerEvent.Finished -> {
                 val buzzMs = vibrate(state, Buzz.FINISH)
+                chimes.signal(state.session, finish = true)
+                val chimeMs = if (state.session.tone.sounds(finish = true)) chimeMillis(state.session.chime, finish = true) else 0
                 wakeScreen(state)
                 scope.launch {
-                    // Let the final vibration and flash complete before releasing locks.
-                    delay(maxOf(3000L, buzzMs + 500))
+                    // Let the final vibration, tone and flash complete before releasing locks.
+                    delay(maxOf(state.session.flashMillis + 500, buzzMs + 500, chimeMs + 500))
                     shutdown()
                 }
             }
@@ -103,12 +126,20 @@ class TimerService : Service() {
 
     private fun shutdown() {
         notifications.cancel(ID_FLASH)
+        notifications.cancel(ID_CLOCK)
+        unregisterScreenOn()
         stopForeground(STOP_FOREGROUND_REMOVE)
         cpuLock?.takeIf { it.isHeld }?.release()
         stopSelf()
     }
 
+    private fun unregisterScreenOn() {
+        if (screenOnRegistered) unregisterReceiver(screenOn)
+        screenOnRegistered = false
+    }
+
     override fun onDestroy() {
+        unregisterScreenOn()
         music.stop()
         cpuLock?.takeIf { it.isHeld }?.release()
         engine.listener = { _, _ -> }
@@ -154,6 +185,8 @@ class TimerService : Service() {
             .putExtra(FlashActivity.EXTRA_TITLE, title)
             .putExtra(FlashActivity.EXTRA_TEXT, text)
             .putExtra(FlashActivity.EXTRA_FINISHED, state.finished)
+            .putExtra(FlashActivity.EXTRA_MILLIS, state.session.flashMillis)
+            .putExtra(FlashActivity.EXTRA_COLOR, state.session.flashColor)
         val pending = PendingIntent.getActivity(
             this, 1, flashIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -166,7 +199,7 @@ class TimerService : Service() {
             .setFullScreenIntent(pending, true)
             .setContentIntent(mainPendingIntent())
             .setAutoCancel(true)
-            .setTimeoutAfter(4000)
+            .setTimeoutAfter(state.session.flashMillis + 1500)
             .build()
         notifications.cancel(ID_FLASH) // re-posting is what fires the full-screen intent again
         notifications.notify(ID_FLASH, notification)
@@ -177,15 +210,45 @@ class TimerService : Service() {
             power.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "Wassertiger:flash",
-            ).acquire(2500)
+            ).acquire(state.session.flashMillis)
         }
+    }
+
+    /**
+     * Shows the countdown over the lock screen that just lit up. A full-screen intent is the one way
+     * a background service may open an activity; with the lock screen showing, the system launches it
+     * right away. [FlashActivity] withdraws the notification as soon as it is up.
+     */
+    private fun showClock() {
+        val pending = PendingIntent.getActivity(
+            this, 2, Intent(this, FlashActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = Notification.Builder(this, CHANNEL_FLASH)
+            .setSmallIcon(R.drawable.ic_stat_timer)
+            .setContentTitle(engine.state.value?.session?.name ?: "Wassertiger")
+            .setCategory(Notification.CATEGORY_ALARM)
+            .setFullScreenIntent(pending, true)
+            .setContentIntent(mainPendingIntent())
+            .setAutoCancel(true)
+            .setTimeoutAfter(3000)
+            .build()
+        notifications.notify(ID_CLOCK, notification)
     }
 
     // --- notifications ----------------------------------------------------
 
     private fun createChannels() {
+        // Default importance, silent: low-importance ("silent") notifications are hidden on many lock
+        // screens, and this one carries the countdown. Importance cannot be raised on an existing
+        // channel, hence the new id; the old low one goes.
+        notifications.deleteNotificationChannel(CHANNEL_ONGOING_OLD)
         notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_ONGOING, "Laufende Session", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ONGOING, "Laufende Session", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
         )
         // High importance is required for full-screen intents; sound and vibration stay off
         // so the channel never interrupts music (the service vibrates itself).
@@ -243,16 +306,22 @@ class TimerService : Service() {
         const val ACTION_SKIP = "skip"
         const val ACTION_STOP = "stop"
         const val EXTRA_SESSION_ID = "session"
-        private const val CHANNEL_ONGOING = "ongoing"
+        private const val CHANNEL_ONGOING = "session"
+        private const val CHANNEL_ONGOING_OLD = "ongoing"
         private const val CHANNEL_FLASH = "flash"
         private const val ID_ONGOING = 1
         private const val ID_FLASH = 2
+        /** The notification that opens the lock-screen countdown; [FlashActivity] cancels it once shown. */
+        const val ID_CLOCK = 3
         private const val CPU_LOCK_MS = 4 * 60 * 60 * 1000L
 
         /** Process-wide, so the UI and the service see the same run. */
         val engine = TimerEngine(MainScope())
 
         private val music by lazy { MusicPlayer(LiveStream(::TrackSink)) { DrumSamples.load(::bundledResource) } }
+
+        /** Also plays the editor's previews. */
+        val chimes by lazy { ChimePlayer(::TrackSink) }
 
         fun start(context: Context, session: Session) =
             ContextCompat.startForegroundService(context, startIntent(context).putExtra(EXTRA_SESSION_ID, session.id))
