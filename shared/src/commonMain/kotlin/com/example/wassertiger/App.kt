@@ -1166,6 +1166,7 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 Text(
                     when {
                         run.paused -> "Toggl pausiert: ${t.label()}"
+                        run.step?.track == false -> "Toggl: dieses Intervall zählt nicht (${t.label()})"
                         t.live -> "● Toggl zählt mit: ${t.label()}"
                         // Another timer runs there, or Toggl could not be asked: booked at a pause or the end.
                         else -> "Toggl: ${t.label()} (wird am Ende eingetragen)"
