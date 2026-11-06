@@ -185,12 +185,17 @@ data class TogglRun(
     val deleted: Boolean = false,
     val workspace: Long? = null,
     val error: String? = null,
+    /**
+     * The session asks for its description or project at every run: nothing goes to Toggl until
+     * they are given (then the time so far is booked, from the start).
+     */
+    val waiting: Boolean = false,
 ) {
     /** Counting in Toggl right now. */
     val live: Boolean get() = segments.any { it.running && it.end == null }
 
     /** Everything that ended is in Toggl as it should be. */
-    val synced: Boolean get() = segments.all { s ->
+    val synced: Boolean get() = !waiting && segments.all { s ->
         if (s.end == null) true else s.entryId != null && !s.running && (!aborted || s.tagged)
     }
 
@@ -200,11 +205,13 @@ data class TogglRun(
 }
 
 /**
- * Keeps Toggl in step with the runs: a session counts in Toggl from its start, named as it was
- * booked last time (or after the session). A pause ends the entry, going on starts a new one; the
- * end stops it, and Stopp before the end stops it there and tags it [TOGGL_ABORTED_TAG]. Toggl
- * runs one timer at a time, so a run only counts live there while no other timer runs (the user's
- * own included, which is never touched); otherwise its stretches are booked as they end.
+ * Keeps Toggl in step with the runs: a session counts in Toggl from its start under the description
+ * and project set for it in the editor; one that asks for them waits until they are given ([TogglRun.waiting]).
+ * Only intervals with [Step.track] count: a pause or an untracked interval (a Pomodoro break) ends
+ * the entry, the next tracked one starts a new one; the end stops it, and Stopp before the end
+ * stops it there and tags it [TOGGL_ABORTED_TAG]. Toggl runs one timer at a time, so a run only
+ * counts live there while no other timer runs (the user's own included, which is never touched);
+ * otherwise its stretches are booked as they end.
  *
  * Fed by the platform with every [TimerEvent]; network trouble leaves the run unsynced, see [retry].
  */
@@ -228,11 +235,23 @@ class TogglTracker(
         val now = wallClockMillis()
         when (event) {
             TimerEvent.Started -> {
-                if (settings.togglToken == null || !run.session.toggl) return
-                val (description, project) = settings.lastEntry(run.session.name) ?: (run.session.name to null)
-                change(id) { TogglRun(id, run.session.name, description, project, listOf(TogglSegment(run.startedAt))) }
+                val s = run.session
+                if (settings.togglToken == null || !s.toggl) return
+                // Asked for each time: offered as last time for this session.
+                val last = settings.lastEntry(s.name)
+                val description = if (s.togglAskDescription) last?.first ?: s.togglName else s.togglName
+                val project = if (s.togglAskProject) last?.second else s.togglProject
+                val first = if (run.step?.track != false) listOf(TogglSegment(run.startedAt)) else emptyList()
+                change(id) { TogglRun(id, s.name, description, project, first, waiting = s.togglAsks) }
             }
-            TimerEvent.PauseChanged -> change(id) { t -> if (run.paused) t?.close(now) else t?.open(now) }
+            TimerEvent.PauseChanged -> change(id) { t -> if (run.paused) t?.close(now) else t?.openIf(run.step?.track != false, now) }
+            TimerEvent.Step -> {
+                val t = runs.value[id] ?: return
+                val counting = t.segments.any { it.end == null }
+                val tracked = run.step?.track != false
+                if (counting == tracked) return
+                change(id) { it?.close(now)?.openIf(tracked, now) }
+            }
             TimerEvent.Finished -> change(id) { t -> t?.close(run.endedAt) }
             TimerEvent.Stopped -> change(id) { t ->
                 when {
@@ -243,16 +262,18 @@ class TogglTracker(
                     else -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(aborted = true)
                 }
             }
-            TimerEvent.Step -> return
         }
         sync(id)
     }
 
-    /** Renames run [runId] in Toggl (and remembers it for its session's next run). */
+    /**
+     * Names run [runId] in Toggl (remembered to offer next time); a run that was [TogglRun.waiting]
+     * for it goes to Toggl now.
+     */
     fun edit(runId: Long, description: String, project: TogglProject?) {
         val t = runs.value[runId] ?: return
         settings.rememberEntry(t.sessionName, description, project)
-        change(runId) { it?.copy(description = description, project = project) }
+        change(runId) { it?.copy(description = description, project = project, waiting = false) }
         launch {
             val token = settings.togglToken ?: return@launch
             val toggl = client(token)
@@ -267,11 +288,18 @@ class TogglTracker(
                 change(runId) { it?.copy(error = e.message) }
             }
         }
+        if (t.waiting) sync(runId)
     }
 
     /** Takes run [runId] out of Toggl. */
-    fun delete(runId: Long) {
-        change(runId) { it?.copy(deleted = true) }
+    fun delete(runId: Long) = setTracked(runId, false)
+
+    /**
+     * Leaves run [runId] out of Toggl this time (what went in already is taken out again), or with
+     * [on] takes it back in: the time counted so far is booked then, and it counts on from there.
+     */
+    fun setTracked(runId: Long, on: Boolean) {
+        change(runId) { it?.copy(deleted = !on, error = null) }
         sync(runId)
     }
 
@@ -310,8 +338,8 @@ class TogglTracker(
     private fun TogglRun.close(at: Long): TogglRun =
         copy(segments = segments.map { if (it.end == null) it.copy(end = maxOf(at, it.start)) else it })
 
-    private fun TogglRun.open(at: Long): TogglRun =
-        if (segments.any { it.end == null }) this else copy(segments = segments + TogglSegment(at))
+    private fun TogglRun.openIf(tracked: Boolean, at: Long): TogglRun =
+        if (!tracked || segments.any { it.end == null }) this else copy(segments = segments + TogglSegment(at))
 
     private fun change(id: Long, transform: (TogglRun?) -> TogglRun?) {
         val next = transform(runs.value[id])
@@ -334,6 +362,7 @@ class TogglTracker(
         val toggl = client(token)
         try {
             var t = runs.value[id] ?: return@launch
+            if (t.waiting && !t.deleted) return@launch
             val workspace = workspaceOf(t, toggl)
             if (t.workspace == null) change(id) { it?.copy(workspace = workspace) }
             if (t.deleted) {
@@ -415,27 +444,14 @@ class SettingsStore(private val storage: SessionStorage) {
     fun lastEntry(sessionName: String): Pair<String, TogglProject?>? {
         val o = read()["togglLast"]?.jsonObject?.get(sessionName)?.jsonObject ?: return null
         val description = o["description"]?.jsonPrimitive?.contentOrNull ?: return null
-        val project = o["project"]?.jsonObject?.let { p ->
-            TogglProject(
-                id = p["id"]?.jsonPrimitive?.longOrNull ?: return@let null,
-                name = p["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                workspaceId = p["workspace"]?.jsonPrimitive?.longOrNull ?: return@let null,
-            )
-        }
-        return description to project
+        return description to o["project"]?.let(::readProject)
     }
 
     fun rememberEntry(sessionName: String, description: String, project: TogglProject?) = write {
         val last = (this["togglLast"] as? JsonObject).orEmpty().toMutableMap()
         last[sessionName] = buildJsonObject {
             put("description", description)
-            project?.let {
-                put("project", buildJsonObject {
-                    put("id", it.id)
-                    put("name", it.name)
-                    put("workspace", it.workspaceId)
-                })
-            }
+            project?.let { put("project", writeProject(it)) }
         }
         put("togglLast", JsonObject(last))
     }

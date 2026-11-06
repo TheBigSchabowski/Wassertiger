@@ -3,6 +3,8 @@ package com.example.wassertiger
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
@@ -23,6 +25,8 @@ import kotlin.random.Random
  * A [block] is a whole other session put in as one interval (the "Atemübung" in the Pomodoro break):
  * its intervals with every round written out, played one after the other. [seconds] is their sum and
  * [name] the session's name.
+ *
+ * [track]: counts in Toggl (off for the breaks of a Pomodoro).
  */
 data class Step(
     val seconds: Int,
@@ -31,6 +35,7 @@ data class Step(
     val groove: String? = null,
     val bpm: Int = 90,
     val block: List<Step> = emptyList(),
+    val track: Boolean = true,
 ) {
     val isBlock: Boolean get() = block.isNotEmpty()
 
@@ -68,7 +73,21 @@ data class Session(
     val flashColor: Int = AMBER_RGB,
     /** Counts in Toggl while it runs, if Toggl is connected (see [TogglTracker]). */
     val toggl: Boolean = true,
+    /** What it is called in Toggl; blank = the session's name. */
+    val togglDescription: String = "",
+    /** Asks for the description at every run instead of using [togglDescription]. */
+    val togglAskDescription: Boolean = false,
+    /** Its Toggl project; null = none. */
+    val togglProject: TogglProject? = null,
+    /** Asks for the project at every run instead of using [togglProject]. */
+    val togglAskProject: Boolean = false,
 ) {
+    /** Something to fill in at every run before (or after) it goes to Toggl. */
+    val togglAsks: Boolean get() = togglAskDescription || togglAskProject
+
+    /** The description a run goes to Toggl under, unless it asks. */
+    val togglName: String get() = togglDescription.ifBlank { name }
+
     fun musicSettings(step: Step) = MusicSettings(
         root = step.drone ?: 9,
         sound = sound,
@@ -81,8 +100,10 @@ data class Session(
     val endless: Boolean get() = rounds == ENDLESS
 
     /** What a run plays: every [Step.block] replaced by its intervals. */
-    fun expanded(): Session =
-        if (steps.none { it.isBlock }) this else copy(steps = steps.flatMap { if (it.isBlock) it.block else listOf(it) })
+    fun expanded(): Session = if (steps.none { it.isBlock }) this else copy(
+        // A block left out of Toggl leaves out all of its intervals.
+        steps = steps.flatMap { b -> if (b.isBlock) b.block.map { if (b.track) it else it.copy(track = false) } else listOf(b) },
+    )
 
     /** This session as one interval of another (see [Step.block]); endless ones go in with one round. */
     fun asBlock(): Step {
@@ -180,7 +201,11 @@ fun vibrationPattern(seconds: Int, buzz: Buzz): LongArray {
 /** Ready-made sessions offered as templates; each call hands out fresh ids. */
 fun presets(): List<Session> = listOf(
     Session(name = "Atemübung", steps = listOf(Step(5, "Einatmen"), Step(5, "Ausatmen")), rounds = 30),
-    Session(name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4),
+    // Breaks stay out of Toggl; what the focus was is asked every time.
+    Session(
+        name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause", track = false)), rounds = 4,
+        togglAskDescription = true, togglAskProject = true,
+    ),
     Session(name = "Alle 5 Sekunden", steps = listOf(Step(5)), rounds = ENDLESS),
 )
 
@@ -289,6 +314,10 @@ class SessionStore(private val storage: SessionStorage) {
                 chime = o["chime"]?.jsonPrimitive?.content.let { n -> Chime.entries.firstOrNull { it.name == n } } ?: Chime.BEEP,
                 flashColor = o["flashColor"]?.jsonPrimitive?.content?.let(::parseHexColor) ?: AMBER_RGB,
                 toggl = o["toggl"]?.jsonPrimitive?.boolean ?: true,
+                togglDescription = o["togglDescription"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
+                togglProject = o["togglProject"]?.let { readProject(it) },
+                togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
             )
         }
     }
@@ -310,6 +339,10 @@ class SessionStore(private val storage: SessionStorage) {
                     put("chime", session.chime.name)
                     put("flashColor", formatHexColor(session.flashColor))
                     put("toggl", session.toggl)
+                    put("togglDescription", session.togglDescription)
+                    put("togglAskDescription", session.togglAskDescription)
+                    session.togglProject?.let { put("togglProject", writeProject(it)) }
+                    put("togglAskProject", session.togglAskProject)
                     put("steps", writeSteps(session.steps))
                 })
             }
@@ -328,6 +361,7 @@ class SessionStore(private val storage: SessionStorage) {
             groove = s["groove"]?.jsonPrimitive?.contentOrNull,
             bpm = s["bpm"]?.jsonPrimitive?.int ?: 90,
             block = s["block"]?.jsonArray?.map(::readStep).orEmpty(),
+            track = s["track"]?.jsonPrimitive?.boolean ?: true,
         )
     }
 
@@ -340,6 +374,7 @@ class SessionStore(private val storage: SessionStorage) {
                 step.groove?.let { put("groove", it) }
                 put("bpm", step.bpm)
                 if (step.isBlock) put("block", writeSteps(step.block))
+                if (!step.track) put("track", false)
             })
         }
     }
@@ -350,4 +385,19 @@ class SessionStore(private val storage: SessionStorage) {
             steps = listOf(15, 15, 30, 30, 60, 48).map { Step(it) },
         )
     }
+}
+
+fun writeProject(p: TogglProject): JsonObject = buildJsonObject {
+    put("id", p.id)
+    put("name", p.name)
+    put("workspace", p.workspaceId)
+}
+
+fun readProject(element: JsonElement): TogglProject? {
+    val p = element as? JsonObject ?: return null
+    return TogglProject(
+        id = p["id"]?.jsonPrimitive?.longOrNull ?: return null,
+        name = p["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        workspaceId = p["workspace"]?.jsonPrimitive?.longOrNull ?: return null,
+    )
 }

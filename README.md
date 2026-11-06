@@ -46,19 +46,28 @@ Pro Session einstellbar (Editor → „Signal beim Wechsel“):
 Das Aufleuchten zählt die Restzeit des neuen Intervalls live herunter, ebenso der Hinweis oben, wenn das
 Display schon an ist.
 
-**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Ab dann zählt jede
-Session in Toggl **live mit**, solange sie läuft – unter der Beschreibung und dem Projekt, die du ihr zuletzt
-gegeben hast (anfangs der Session-Name). Ein Tipp auf „● Toggl zählt mit: …“ benennt sie um, auch mitten im Lauf.
+**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Was in Toggl landet,
+stellt jede Session im Editor unter „Toggl“ ein:
 
-- **Pause** beendet den Eintrag, **Weiter** startet einen neuen – Pausen zählen nicht.
-- **Ende:** der Eintrag stoppt; der Fertig-Bildschirm zeigt Zeit, Beschreibung und Projekt, mit „Ändern“ und
-  „Aus Toggl löschen“.
-- **Stopp vor dem Ende:** der Eintrag endet genau dort und bekommt den Tag *abgebrochen*. Unter einer Minute
-  gestoppt (aus Versehen gestartet) verschwindet er wieder.
+- **In Toggl erfassen** – aus = diese Session nie.
+- **Projekt** fest (z. B. Atemübung → Musik) oder *jedes Mal wählen*; **Beschreibung** fest (leer = Session-Name)
+  oder *jedes Mal eingeben*.
+- **Erfasst werden** – welche Intervalle zählen; bei Pomodoro z. B. nur „Fokus“, die Pausen nicht
+  (der Editor zeigt die erfasste Zeit, z. B. 1:40:00 statt 2:00:00).
+
+Beim Laufen: Alles fest → die Session zählt sofort **live** in Toggl mit. Fragt sie etwas *jedes Mal*, steht unter
+dem Countdown „Für Toggl“ – gleich ausgefüllt zählt sie ab Start mit, sonst trägst du am Ende ein (vorgeschlagen
+wird, was du für diese Session zuletzt eingetragen hast). „Diesmal nicht erfassen“ lässt einen einzelnen Lauf
+weg (bei festen Sessions per Tipp auf „● Toggl zählt mit“), „Doch erfassen“ holt ihn zurück.
+
+- **Pause** beendet den Eintrag, **Weiter** startet einen neuen – Pausen zählen nicht, ebenso wenig nicht erfasste Intervalle.
+- **Ende:** Zeit, Beschreibung, Projekt – mit „Ändern“ und „Aus Toggl löschen“ / „Doch eintragen“.
+- **Stopp vor dem Ende:** der Eintrag endet genau dort und bekommt den Tag *abgebrochen*; unter einer Minute
+  gestoppt verschwindet er wieder.
 - Toggl kennt nur einen laufenden Timer: Läuft dort schon einer – dein eigener oder eine parallele Session –,
   bleibt er unangetastet, und die Session wird eingetragen, sobald sie pausiert oder endet.
 - Ohne Netz oder am Stundenlimit des kostenlosen Toggl-Plans holt die App das Eintragen von selbst nach
-  (oder sofort mit „Nochmal“). Pro Session abschaltbar im Editor („In Toggl erfassen“).
+  (oder sofort mit „Nochmal“).
 
 **Restzeit bei gesperrtem Handy (Android):** Während eine Session läuft, zeigt die Power-Taste statt des
 Sperrbildschirms den großen Countdown mit Pause, Überspringen und Stopp. „Entsperren“ (oder Fingerabdruck)
