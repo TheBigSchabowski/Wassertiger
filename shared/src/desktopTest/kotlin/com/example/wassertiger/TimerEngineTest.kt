@@ -99,16 +99,16 @@ class TimerEngineTest {
         val engine = TimerEngine(this)
         val seen = mutableListOf<Pair<TimerEvent, String>>()
         engine.listener = { event, s -> seen += event to "${s.round}/${s.index}" }
-        engine.start(twoSteps.copy(rounds = 2))
-        assertEquals("B", engine.state.value!!.nextStep!!.name)
-        engine.skip()
-        assertEquals("A", engine.state.value!!.nextStep!!.name, "round 1 ends, round 2 starts with A")
-        engine.skip()
-        assertEquals("Runde 2 / 2", engine.state.value!!.roundLabel)
-        engine.skip()
-        assertNull(engine.state.value!!.nextStep, "last step of last round")
-        engine.skip()
-        assertTrue(engine.state.value!!.finished)
+        val id = engine.start(twoSteps.copy(rounds = 2))
+        assertEquals("B", engine.runs.value.single().nextStep!!.name)
+        engine.skip(id)
+        assertEquals("A", engine.runs.value.single().nextStep!!.name, "round 1 ends, round 2 starts with A")
+        engine.skip(id)
+        assertEquals("Runde 2 / 2", engine.runs.value.single().roundLabel)
+        engine.skip(id)
+        assertNull(engine.runs.value.single().nextStep, "last step of last round")
+        engine.skip(id)
+        assertTrue(engine.runs.value.single().finished)
         assertEquals(
             listOf(
                 TimerEvent.Started to "0/0", TimerEvent.Step to "0/1", TimerEvent.Step to "1/0",
@@ -121,14 +121,14 @@ class TimerEngineTest {
     @Test
     fun endlessKeepsGoing() = runBlocking {
         val engine = TimerEngine(this)
-        engine.start(Session(name = "Ping", steps = listOf(Step(5)), rounds = ENDLESS))
-        repeat(100) { engine.skip() }
-        val s = engine.state.value!!
+        val id = engine.start(Session(name = "Ping", steps = listOf(Step(5)), rounds = ENDLESS))
+        repeat(100) { engine.skip(id) }
+        val s = engine.runs.value.single()
         assertTrue(!s.finished)
         assertEquals("Runde 101", s.roundLabel)
         assertEquals("5 s", s.nextStep?.let { formatDuration(it.seconds) })
         assertEquals("5 s" to "Runde 101", s.flashText())
-        engine.stop()
+        engine.stop(id)
     }
 
     @Test
@@ -137,14 +137,14 @@ class TimerEngineTest {
         val events = mutableListOf<Pair<TimerEvent, Long>>()
         val t0 = monotonicMillis()
         engine.listener = { event, _ -> events += event to monotonicMillis() - t0 }
-        engine.start(twoSteps)
-        while (engine.state.value?.finished != true) delay(20)
+        val id = engine.start(twoSteps)
+        while (engine.runs.value.single().finished != true) delay(20)
 
         assertEquals(listOf(TimerEvent.Started, TimerEvent.Step, TimerEvent.Finished), events.map { it.first })
         assertTrue(events[1].second in 950..1200, "step change at ${events[1].second} ms")
         assertTrue(events[2].second in 1950..2200, "finish at ${events[2].second} ms")
-        engine.dismissFinished()
-        assertNull(engine.state.value)
+        engine.dismiss(id)
+        assertTrue(engine.runs.value.isEmpty())
     }
 
     @Test
@@ -152,22 +152,129 @@ class TimerEngineTest {
         val engine = TimerEngine(this)
         val events = mutableListOf<TimerEvent>()
         engine.listener = { event, _ -> events += event }
-        engine.start(twoSteps)
+        val id = engine.start(twoSteps)
         delay(300)
-        engine.togglePause()
-        val held = engine.state.value!!.remainingMs()
+        engine.togglePause(id)
+        val held = engine.runs.value.single().remainingMs()
         delay(1200)
-        assertEquals(0, engine.state.value!!.index, "paused step must not advance")
-        assertEquals(held, engine.state.value!!.remainingMs())
+        assertEquals(0, engine.runs.value.single().index, "paused step must not advance")
+        assertEquals(held, engine.runs.value.single().remainingMs())
 
-        engine.togglePause()
-        engine.skip()
-        assertEquals("B", engine.state.value!!.step!!.name)
-        engine.stop()
-        assertNull(engine.state.value)
+        engine.togglePause(id)
+        engine.skip(id)
+        assertEquals("B", engine.runs.value.single().step!!.name)
+        engine.stop(id)
+        assertTrue(engine.runs.value.isEmpty())
         assertEquals(
             listOf(TimerEvent.Started, TimerEvent.PauseChanged, TimerEvent.PauseChanged, TimerEvent.Step, TimerEvent.Stopped),
             events,
         )
+    }
+
+    @Test
+    fun runsInParallel() = runBlocking {
+        val engine = TimerEngine(this)
+        val pomodoro = engine.start(presets()[1])
+        val breathing = engine.start(presets()[0])
+        assertEquals(listOf("Pomodoro", "Atemübung"), engine.active.map { it.session.name })
+        engine.skip(breathing)
+        assertEquals("Ausatmen", engine.run(breathing)!!.step!!.name)
+        assertEquals("Fokus", engine.run(pomodoro)!!.step!!.name, "the other run is untouched")
+        engine.togglePause(pomodoro)
+        assertTrue(engine.run(pomodoro)!!.paused && !engine.run(breathing)!!.paused)
+        engine.stop(pomodoro)
+        assertEquals(listOf(breathing), engine.runs.value.map { it.id })
+        engine.stopAll()
+        assertTrue(engine.runs.value.isEmpty())
+    }
+
+    @Test
+    fun startingARunningSessionStartsItOver() = runBlocking {
+        val engine = TimerEngine(this)
+        val session = presets()[0]
+        val first = engine.start(session)
+        engine.skip(first)
+        val activeAtStop = mutableListOf<Int>()
+        engine.listener = { event, _ -> if (event == TimerEvent.Stopped) activeAtStop += engine.active.size }
+        val second = engine.start(session)
+        assertEquals(listOf(1), activeAtStop, "the new run is in before the old one stops")
+        assertEquals(listOf(second), engine.runs.value.map { it.id })
+        assertEquals(0, engine.run(second)!!.index)
+        engine.stopAll()
+    }
+
+    @Test
+    fun stoppedRunStaysForTogglWhenWanted() = runBlocking {
+        val engine = TimerEngine(this)
+        engine.keepStopped = { true }
+        val id = engine.start(twoSteps)
+        engine.togglePause(id)
+        delay(200)
+        engine.stop(id)
+        val stopped = engine.run(id)!!
+        assertTrue(stopped.finished && stopped.stopped && !stopped.paused)
+        assertTrue(stopped.pausedMs >= 150, "the pause is left out of the booked time")
+        assertTrue(stopped.activeMillis() < 150)
+        assertEquals("Gestoppt" to "Test", stopped.flashText())
+        assertTrue(engine.active.isEmpty())
+        engine.stop(id)
+        assertTrue(engine.runs.value.isEmpty(), "stopping a stopped run clears it")
+    }
+
+    @Test
+    fun blocksPlayTheirIntervals() = runBlocking {
+        val breathing = presets()[0]
+        val block = breathing.asBlock()
+        assertEquals(5 * 60, block.seconds)
+        assertEquals(60, block.block.size)
+        val pomodoro = Session(name = "Pomodoro + Atmen", steps = listOf(Step(25 * 60, "Fokus"), block), rounds = 4)
+        assertEquals("2 Intervalle × 4 Runden · 2:00:00", pomodoro.summary())
+        assertEquals(61, pomodoro.expanded().steps.size)
+
+        val engine = TimerEngine(this)
+        val id = engine.start(pomodoro)
+        engine.skip(id)
+        assertEquals("Einatmen", engine.run(id)!!.step!!.name)
+        assertEquals("Intervall 2 / 61", "Intervall ${engine.run(id)!!.index + 1} / ${engine.run(id)!!.session.steps.size}")
+        engine.stopAll()
+
+        var saved: String? = null
+        val store = SessionStore(object : SessionStorage {
+            override fun read() = saved
+            override fun write(json: String) { saved = json }
+        })
+        store.save(listOf(pomodoro))
+        assertEquals(pomodoro, store.load().single())
+        // Endless sessions go in with one round.
+        assertEquals(1, presets()[2].asBlock().block.size)
+    }
+
+    @Test
+    fun flashCountsDown() {
+        val run = RunState(twoSteps.copy(steps = listOf(Step(5, "Einatmen"))), index = 0, stepEndAt = 10_000)
+        assertEquals("5 s" to "Einatmen", run.flashText())
+        assertEquals("5 s" to "Einatmen", run.flashText(now = 5_000))
+        assertEquals("3 s" to "Einatmen", run.flashText(now = 7_500))
+    }
+
+    @Test
+    fun settingsKeepTokenAndLastEntry() {
+        var saved: String? = null
+        val settings = SettingsStore(object : SessionStorage {
+            override fun read() = saved
+            override fun write(json: String) { saved = json }
+        })
+        assertNull(settings.togglToken)
+        settings.togglToken = " abc123 "
+        assertEquals("abc123", settings.togglToken)
+        val project = TogglProject(42, "Uni", 7)
+        settings.rememberEntry("Pomodoro", "Bachelorarbeit", project)
+        settings.rememberEntry("Atemübung", "Atmen", null)
+        assertEquals("Bachelorarbeit" to project, settings.lastEntry("Pomodoro"))
+        assertEquals("Atmen" to null, settings.lastEntry("Atemübung"))
+        assertEquals("abc123", settings.togglToken)
+        settings.togglToken = null
+        assertNull(settings.togglToken)
+        assertEquals("2026-11-06T09:30:00Z", isoInstant(1_793_957_400_000))
     }
 }

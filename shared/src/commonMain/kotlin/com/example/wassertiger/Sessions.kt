@@ -2,6 +2,7 @@ package com.example.wassertiger
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
@@ -18,6 +19,10 @@ import kotlin.random.Random
  * One interval: after [seconds] the device signals the change. In a music session it also plays a
  * [drone] on that pitch class (0 = C) and/or the [groove] at [bpm]; null = that part is silent.
  * [name] is what to play over it ("Phrygisch", "16tel") and stands big on the screen.
+ *
+ * A [block] is a whole other session put in as one interval (the "Atemübung" in the Pomodoro break):
+ * its intervals with every round written out, played one after the other. [seconds] is their sum and
+ * [name] the session's name.
  */
 data class Step(
     val seconds: Int,
@@ -25,7 +30,10 @@ data class Step(
     val drone: Int? = null,
     val groove: String? = null,
     val bpm: Int = 90,
+    val block: List<Step> = emptyList(),
 ) {
+    val isBlock: Boolean get() = block.isNotEmpty()
+
     /** "A-Drone · Straight 16 · 80 BPM", "Stille" for neither. */
     fun soundLabel(): String = listOfNotNull(
         drone?.let { "${NOTE_NAMES[it]}-Drone" },
@@ -58,6 +66,8 @@ data class Session(
     val chime: Chime = Chime.BEEP,
     /** Colour of the flash at an interval change, 0xRRGGBB; the end always flashes green. */
     val flashColor: Int = AMBER_RGB,
+    /** Counts in Toggl while it runs, if Toggl is connected (see [TogglTracker]). */
+    val toggl: Boolean = true,
 ) {
     fun musicSettings(step: Step) = MusicSettings(
         root = step.drone ?: 9,
@@ -69,6 +79,17 @@ data class Session(
     )
 
     val endless: Boolean get() = rounds == ENDLESS
+
+    /** What a run plays: every [Step.block] replaced by its intervals. */
+    fun expanded(): Session =
+        if (steps.none { it.isBlock }) this else copy(steps = steps.flatMap { if (it.isBlock) it.block else listOf(it) })
+
+    /** This session as one interval of another (see [Step.block]); endless ones go in with one round. */
+    fun asBlock(): Step {
+        val once = expanded().steps
+        val all = List(if (endless) 1 else rounds) { once }.flatten()
+        return Step(seconds = all.sumOf { it.seconds }, name = name, block = all)
+    }
     /** A fresh session to edit and start, built from this one (a preset or template). */
     fun newSession(): Session = copy(id = newId(), template = false)
     fun asTemplate(): Session = copy(id = newId(), template = true)
@@ -254,16 +275,7 @@ class SessionStore(private val storage: SessionStorage) {
             Session(
                 id = o.getValue("id").jsonPrimitive.content,
                 name = o.getValue("name").jsonPrimitive.content,
-                steps = o.getValue("steps").jsonArray.map {
-                    val s = it.jsonObject
-                    Step(
-                        seconds = s.getValue("seconds").jsonPrimitive.int,
-                        name = s["name"]?.jsonPrimitive?.content.orEmpty(),
-                        drone = s["drone"]?.jsonPrimitive?.intOrNull,
-                        groove = s["groove"]?.jsonPrimitive?.contentOrNull,
-                        bpm = s["bpm"]?.jsonPrimitive?.int ?: 90,
-                    )
-                },
+                steps = o.getValue("steps").jsonArray.map(::readStep),
                 // Sessions saved before rounds existed play once.
                 rounds = o["rounds"]?.jsonPrimitive?.int ?: 1,
                 template = o["template"]?.jsonPrimitive?.boolean ?: false,
@@ -276,6 +288,7 @@ class SessionStore(private val storage: SessionStorage) {
                 tone = o["tone"]?.jsonPrimitive?.content.let { n -> ToneMode.entries.firstOrNull { it.name == n } } ?: ToneMode.OFF,
                 chime = o["chime"]?.jsonPrimitive?.content.let { n -> Chime.entries.firstOrNull { it.name == n } } ?: Chime.BEEP,
                 flashColor = o["flashColor"]?.jsonPrimitive?.content?.let(::parseHexColor) ?: AMBER_RGB,
+                toggl = o["toggl"]?.jsonPrimitive?.boolean ?: true,
             )
         }
     }
@@ -296,17 +309,8 @@ class SessionStore(private val storage: SessionStorage) {
                     put("tone", session.tone.name)
                     put("chime", session.chime.name)
                     put("flashColor", formatHexColor(session.flashColor))
-                    put("steps", buildJsonArray {
-                        session.steps.forEach { step ->
-                            add(buildJsonObject {
-                                put("seconds", step.seconds)
-                                put("name", step.name)
-                                step.drone?.let { put("drone", it) }
-                                step.groove?.let { put("groove", it) }
-                                put("bpm", step.bpm)
-                            })
-                        }
-                    })
+                    put("toggl", session.toggl)
+                    put("steps", writeSteps(session.steps))
                 })
             }
         }
@@ -314,6 +318,31 @@ class SessionStore(private val storage: SessionStorage) {
     }
 
     fun get(id: String): Session? = load().firstOrNull { it.id == id }
+
+    private fun readStep(element: JsonElement): Step {
+        val s = element.jsonObject
+        return Step(
+            seconds = s.getValue("seconds").jsonPrimitive.int,
+            name = s["name"]?.jsonPrimitive?.content.orEmpty(),
+            drone = s["drone"]?.jsonPrimitive?.intOrNull,
+            groove = s["groove"]?.jsonPrimitive?.contentOrNull,
+            bpm = s["bpm"]?.jsonPrimitive?.int ?: 90,
+            block = s["block"]?.jsonArray?.map(::readStep).orEmpty(),
+        )
+    }
+
+    private fun writeSteps(steps: List<Step>): JsonArray = buildJsonArray {
+        steps.forEach { step ->
+            add(buildJsonObject {
+                put("seconds", step.seconds)
+                put("name", step.name)
+                step.drone?.let { put("drone", it) }
+                step.groove?.let { put("groove", it) }
+                put("bpm", step.bpm)
+                if (step.isBlock) put("block", writeSteps(step.block))
+            })
+        }
+    }
 
     private companion object {
         val EXAMPLE = Session(

@@ -7,10 +7,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.math.ceil
 
 /** Monotonic milliseconds that keep counting while the device sleeps. */
 expect fun monotonicMillis(): Long
 
+/** Milliseconds since 1970 (UTC), for the time entries sent to Toggl. */
+expect fun wallClockMillis(): Long
+
+/**
+ * One run of a session. Several can go on at once (a breathing exercise inside the Pomodoro break);
+ * [id] tells them apart. [session] has its blocks written out already (see [Session.expanded]).
+ */
 data class RunState(
     val session: Session,
     val index: Int,
@@ -20,7 +28,19 @@ data class RunState(
     val stepEndAt: Long,
     /** Remaining ms of the current step while paused, null while running. */
     val pausedRemaining: Long? = null,
+    /** Over: the last interval ran out, or it was [stopped] and is kept for Toggl. */
     val finished: Boolean = false,
+    val id: Long = 0,
+    /** [wallClockMillis] at the start. */
+    val startedAt: Long = 0,
+    /** Time spent paused, not counting a pause still going on (see [pausedAt]). */
+    val pausedMs: Long = 0,
+    /** [monotonicMillis] when the current pause began. */
+    val pausedAt: Long? = null,
+    /** [wallClockMillis] when it finished or was stopped; 0 while it runs. */
+    val endedAt: Long = 0,
+    /** Ended with Stopp before the last interval ran out. */
+    val stopped: Boolean = false,
 ) {
     val step: Step? get() = session.steps.getOrNull(index)
     val lastRound: Boolean get() = !session.endless && round >= session.rounds - 1
@@ -35,83 +55,149 @@ data class RunState(
     val paused: Boolean get() = pausedRemaining != null
     fun remainingMs(now: Long = monotonicMillis()): Long =
         pausedRemaining ?: (stepEndAt - now).coerceAtLeast(0)
+
+    /** Whole seconds left of the current step, as the countdown shows them. */
+    fun remainingSeconds(now: Long = monotonicMillis()): Int = ceil(remainingMs(now) / 1000.0).toInt()
+
+    /** How long it has been running, pauses left out: what gets logged to Toggl. */
+    fun activeMillis(wallNow: Long = wallClockMillis(), now: Long = monotonicMillis()): Long {
+        val end = if (endedAt > 0) endedAt else wallNow
+        val pause = pausedMs + (pausedAt?.let { now - it } ?: 0)
+        return (end - startedAt - pause).coerceAtLeast(0)
+    }
+
+    /** The current pause folded into [pausedMs], as when it ends. */
+    internal fun pauseEnded(now: Long): RunState =
+        if (pausedAt == null) this else copy(pausedMs = pausedMs + (now - pausedAt), pausedAt = null, pausedRemaining = null)
 }
 
 enum class TimerEvent { Started, Step, PauseChanged, Finished, Stopped }
 
 /**
- * Steps through a session. The platform reacts to [TimerEvent]s (vibrate, light up the
- * screen, update notifications); the engine itself never touches audio.
+ * Steps through sessions, any number at once. The platform reacts to [TimerEvent]s (vibrate, light
+ * up the screen, update notifications); the engine itself never touches audio.
  */
 class TimerEngine(private val scope: CoroutineScope) {
 
-    private val _state = MutableStateFlow<RunState?>(null)
-    val state: StateFlow<RunState?> = _state.asStateFlow()
+    private val _runs = MutableStateFlow<List<RunState>>(emptyList())
+    /** Every run, oldest first, including finished ones until they are [dismiss]ed. */
+    val runs: StateFlow<List<RunState>> = _runs.asStateFlow()
+
+    /** The runs still counting, oldest first. */
+    val active: List<RunState> get() = runs.value.filter { !it.finished }
 
     var listener: (TimerEvent, RunState) -> Unit = { _, _ -> }
 
-    private var loop: Job? = null
+    /**
+     * Whether a run that is stopped early stays on screen as "Gestoppt" (to log it to Toggl)
+     * instead of vanishing.
+     */
+    var keepStopped: (RunState) -> Boolean = { false }
 
-    fun start(session: Session) {
-        if (session.steps.isEmpty()) return
-        val s = RunState(session, index = 0, stepEndAt = monotonicMillis() + session.steps[0].seconds * 1000L)
-        _state.value = s
+    private val loops = mutableMapOf<Long, Job>()
+    private var nextId = 1L
+
+    fun run(id: Long): RunState? = runs.value.firstOrNull { it.id == id }
+
+    /**
+     * Starts [session] next to whatever runs already; returns the new run's id. Starting a session
+     * that is running already starts it over.
+     */
+    fun start(session: Session): Long {
+        val expanded = session.expanded()
+        if (expanded.steps.isEmpty()) return -1
+        val s = RunState(
+            session = expanded,
+            index = 0,
+            stepEndAt = monotonicMillis() + expanded.steps[0].seconds * 1000L,
+            id = nextId++,
+            startedAt = wallClockMillis(),
+        )
+        // The new run is in before the old one goes, so nothing ever sees "no run left" and shuts down.
+        val replaced = runs.value.filter { it.session.id == session.id }
+        replaced.forEach { loops.remove(it.id)?.cancel() }
+        _runs.value = runs.value.filter { it.session.id != session.id } + s
         listener(TimerEvent.Started, s)
-        runLoop()
+        replaced.forEach { listener(TimerEvent.Stopped, it) }
+        runLoop(s.id)
+        return s.id
     }
 
-    fun togglePause() {
-        val s = state.value?.takeIf { !it.finished } ?: return
+    fun togglePause(id: Long) {
+        val s = run(id)?.takeIf { !it.finished } ?: return
+        val now = monotonicMillis()
         val next = if (s.pausedRemaining == null) {
-            loop?.cancel()
-            s.copy(pausedRemaining = s.remainingMs())
+            loops.remove(id)?.cancel()
+            s.copy(pausedRemaining = s.remainingMs(now), pausedAt = now)
         } else {
-            s.copy(stepEndAt = monotonicMillis() + s.pausedRemaining, pausedRemaining = null)
+            s.pauseEnded(now).copy(stepEndAt = now + s.pausedRemaining)
         }
-        _state.value = next
+        replace(next)
         listener(TimerEvent.PauseChanged, next)
-        if (!next.paused) runLoop()
+        if (!next.paused) runLoop(id)
     }
 
-    fun skip() {
-        val s = state.value?.takeIf { !it.finished } ?: return
-        _state.value = s.copy(pausedRemaining = null)
-        advance(monotonicMillis())
-        runLoop()
+    fun skip(id: Long) {
+        val s = run(id)?.takeIf { !it.finished } ?: return
+        val now = monotonicMillis()
+        replace(s.pauseEnded(now))
+        advance(id, now)
+        runLoop(id)
     }
 
-    fun stop() {
-        val s = state.value ?: return
-        loop?.cancel()
-        _state.value = null
+    /** Ends the run; a finished one is just cleared. See [keepStopped]. */
+    fun stop(id: Long) {
+        val s = run(id) ?: return
+        if (s.finished) return dismiss(id)
+        if (!keepStopped(s)) return drop(id)
+        loops.remove(id)?.cancel()
+        val ended = s.pauseEnded(monotonicMillis()).copy(finished = true, stopped = true, endedAt = wallClockMillis())
+        replace(ended)
+        listener(TimerEvent.Stopped, ended)
+    }
+
+    /** Ends every run and clears them all. */
+    fun stopAll() {
+        runs.value.forEach { if (it.finished) dismiss(it.id) else drop(it.id) }
+    }
+
+    /** Clears a finished run once the user has seen it. */
+    fun dismiss(id: Long) {
+        if (run(id)?.finished == true) _runs.value = runs.value.filter { it.id != id }
+    }
+
+    /** Removes a run without keeping anything of it. */
+    private fun drop(id: Long) {
+        val s = run(id) ?: return
+        loops.remove(id)?.cancel()
+        _runs.value = runs.value.filter { it.id != id }
         listener(TimerEvent.Stopped, s)
     }
 
-    /** Clears the "Fertig" screen once the user has seen it. */
-    fun dismissFinished() {
-        if (state.value?.finished == true) _state.value = null
+    private fun replace(s: RunState) {
+        _runs.value = runs.value.map { if (it.id == s.id) s else it }
     }
 
-    private fun runLoop() {
-        loop?.cancel()
-        loop = scope.launch {
+    private fun runLoop(id: Long) {
+        loops.remove(id)?.cancel()
+        loops[id] = scope.launch {
             while (true) {
-                val s = state.value ?: break
+                val s = run(id) ?: break
                 if (s.paused || s.finished) break
                 val remaining = s.stepEndAt - monotonicMillis()
                 // Short sleeps, re-checked against the real clock, so a late wakeup never drifts.
-                if (remaining <= 0) advance(s.stepEndAt) else delay(minOf(remaining, 500L))
+                if (remaining <= 0) advance(id, s.stepEndAt) else delay(minOf(remaining, 500L))
             }
         }
     }
 
     /** Ends the current step at [endedAt] and moves on, into the next round if any (or finishes). */
-    private fun advance(endedAt: Long) {
-        val s = state.value ?: return
+    private fun advance(id: Long, endedAt: Long) {
+        val s = run(id) ?: return
         val roundOver = s.index + 1 >= s.session.steps.size
         if (roundOver && s.lastRound) {
-            val done = s.copy(index = s.session.steps.size, finished = true)
-            _state.value = done
+            val done = s.copy(index = s.session.steps.size, finished = true, endedAt = wallClockMillis())
+            replace(done)
             listener(TimerEvent.Finished, done)
             return
         }
@@ -121,22 +207,27 @@ class TimerEngine(private val scope: CoroutineScope) {
             round = if (roundOver) s.round + 1 else s.round,
             stepEndAt = endedAt + s.session.steps[next].seconds * 1000L,
         )
-        _state.value = moved
+        replace(moved)
         listener(TimerEvent.Step, moved)
     }
 }
 
-/** Big title and subtitle for the flash shown at a step change. */
-fun RunState.flashText(): Pair<String, String> {
-    if (finished) return "Fertig!" to session.name
+/**
+ * Big title and subtitle for the flash shown at a step change. With [now] the title counts the
+ * current step down ("4 s" … ) instead of naming its length, so a flash that stays up keeps up.
+ */
+fun RunState.flashText(now: Long? = null): Pair<String, String> {
+    if (finished) return (if (stopped) "Gestoppt" else "Fertig!") to session.name
     val step = step ?: return "" to ""
     val position = if (session.steps.size > 1) "${index + 1} / ${session.steps.size}" else ""
+    val clock = now?.let { formatDuration(remainingSeconds(it).coerceAtLeast(1)) }
     // Music: what to play now is the headline ("Phrygisch"), the sound underneath.
     if (session.music) {
         val sound = step.soundLabel()
         return step.name.ifBlank { sound } to
-            listOf(sound.takeIf { step.name.isNotBlank() }.orEmpty(), position, roundLabel).filter { it.isNotBlank() }.joinToString(" · ")
+            listOf(clock.orEmpty(), sound.takeIf { step.name.isNotBlank() }.orEmpty(), position, roundLabel)
+                .filter { it.isNotBlank() }.joinToString(" · ")
     }
-    return formatDuration(step.seconds) to
+    return (clock ?: formatDuration(step.seconds)) to
         listOf(step.name, position, roundLabel).filter { it.isNotBlank() }.joinToString(" · ")
 }

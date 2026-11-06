@@ -45,8 +45,8 @@ object Widgets {
     private fun tilePrefs(context: Context) = context.getSharedPreferences("widgets", Context.MODE_PRIVATE)
     private fun key(widgetId: Int) = "tile_$widgetId"
 
-    /** The run that is going on now; a finished one waiting for "Zurück" no longer counts. */
-    private fun active(): RunState? = TimerService.engine.state.value?.takeIf { !it.finished && it.step != null }
+    /** The runs going on now, oldest first; a finished one waiting for "Zurück" no longer counts. */
+    private fun active(): List<RunState> = TimerService.engine.active.filter { it.step != null }
 
     /** "♪ " in front marks a music session, as both live side by side in the widget. */
     private fun title(session: Session) = if (session.music) "♪ ${session.name}" else session.name
@@ -55,17 +55,20 @@ object Widgets {
         val views = RemoteViews(context.packageName, R.layout.widget_sessions)
         views.setOnClickPendingIntent(R.id.title, openApp(context))
 
-        val run = active()
+        // With sessions in parallel the oldest has the controls; the name says how many more run.
+        val running = active()
+        val run = running.firstOrNull()
         views.setViewVisibility(R.id.run, if (run != null) View.VISIBLE else View.GONE)
         if (run != null) {
             views.setOnClickPendingIntent(R.id.run, openApp(context))
-            views.setTextViewText(R.id.run_name, if (run.paused) "Pausiert – ${title(run.session)}" else title(run.session))
+            val more = if (running.size > 1) " (+${running.size - 1})" else ""
+            views.setTextViewText(R.id.run_name, (if (run.paused) "Pausiert – ${title(run.session)}" else title(run.session)) + more)
             views.setTextViewText(R.id.run_step, stepLabel(run))
             showClock(views, R.id.run_clock, run)
             views.setTextViewText(R.id.run_pause, context.getString(if (run.paused) R.string.widget_resume else R.string.widget_pause))
-            views.setOnClickPendingIntent(R.id.run_pause, TimerService.actionPendingIntent(context, TimerService.ACTION_TOGGLE_PAUSE))
-            views.setOnClickPendingIntent(R.id.run_skip, TimerService.actionPendingIntent(context, TimerService.ACTION_SKIP))
-            views.setOnClickPendingIntent(R.id.run_stop, TimerService.actionPendingIntent(context, TimerService.ACTION_STOP))
+            views.setOnClickPendingIntent(R.id.run_pause, TimerService.actionPendingIntent(context, TimerService.ACTION_TOGGLE_PAUSE, run.id))
+            views.setOnClickPendingIntent(R.id.run_skip, TimerService.actionPendingIntent(context, TimerService.ACTION_SKIP, run.id))
+            views.setOnClickPendingIntent(R.id.run_stop, TimerService.actionPendingIntent(context, TimerService.ACTION_STOP, run.id))
         }
 
         views.setViewVisibility(R.id.empty, if (sessions.isEmpty()) View.VISIBLE else View.GONE)
@@ -101,7 +104,7 @@ object Widgets {
             return views
         }
         views.setTextViewText(R.id.tile_name, title(session))
-        val run = active()?.takeIf { it.session.id == session.id }
+        val run = active().firstOrNull { it.session.id == session.id }
         if (run != null) {
             // Running: the countdown takes the summary's place and a tap opens the run screen.
             views.setTextViewText(R.id.tile_summary, listOfNotNull("Pausiert".takeIf { run.paused }, stepLabel(run).ifBlank { null }).joinToString(" · "))

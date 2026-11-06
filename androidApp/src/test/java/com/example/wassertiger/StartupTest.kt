@@ -30,7 +30,7 @@ class StartupTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
 
     @After
-    fun stopRun() = TimerService.engine.stop()
+    fun stopRun() = TimerService.engine.stopAll()
 
     @Test
     fun startsAndRunsExampleSession() {

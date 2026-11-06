@@ -20,7 +20,7 @@ class WidgetTest {
     private val widgets = shadowOf(AppWidgetManager.getInstance(context))
 
     @After
-    fun stopRun() = TimerService.engine.stop()
+    fun stopRun() = TimerService.engine.stopAll()
 
     @Test
     fun tileShowsItsSessionAndCountsDownWhileRunning() {
@@ -46,8 +46,8 @@ class WidgetTest {
         Widgets.update(context)
         assertEquals(View.GONE, widgets.getViewFor(id).findViewById<View>(R.id.run).visibility)
 
-        TimerService.engine.start(Widgets.startable(context).first())
-        TimerService.engine.togglePause()
+        val run = TimerService.engine.start(Widgets.startable(context).first())
+        TimerService.engine.togglePause(run)
         Widgets.update(context)
         val view = widgets.getViewFor(id)
         assertEquals(View.VISIBLE, view.findViewById<View>(R.id.run).visibility)

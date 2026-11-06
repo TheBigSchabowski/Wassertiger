@@ -1,0 +1,77 @@
+package com.example.wassertiger
+
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.test.core.app.ActivityScenario
+import kotlinx.coroutines.MainScope
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+
+/** A run counts in Toggl while it runs; stopped early it shows as aborted and can be deleted. */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [36])
+class TogglUiTest {
+    @get:Rule val rule = createEmptyComposeRule()
+    private val context = RuntimeEnvironment.getApplication()
+    private val calls = mutableListOf<String>()
+
+    @Before
+    fun fakeToggl() {
+        val settings = settingsStore(context).apply { togglToken = "test-token" }
+        var running = false
+        tracker = TogglTracker(settings, MainScope()) { token ->
+            Toggl(token) { method, url, _, _, body ->
+                val path = url.substringAfter("/api/v9/")
+                calls += "$method $path"
+                when {
+                    path == "me" -> HttpResult(200, """{"fullname":"Test","default_workspace_id":7}""")
+                    path == "me/time_entries/current" -> HttpResult(200, if (running) """{"id":1}""" else "null")
+                    method == "POST" -> HttpResult(200, """{"id":1}""").also { running = body!!.contains("\"duration\":-1") }
+                    method == "PUT" -> HttpResult(200, "{}").also { if (body!!.contains("stop")) running = false }
+                    else -> HttpResult(200, "")
+                }
+            }
+        }
+        TimerService.engine.listener = { event, run -> togglTracker(context).onEvent(event, run) }
+    }
+
+    @After
+    fun cleanUp() {
+        TimerService.engine.stopAll()
+        TimerService.engine.listener = { _, _ -> }
+        TimerService.engine.keepStopped = { false }
+        settingsStore(context).togglToken = null
+        tracker = null
+    }
+
+    @Test
+    fun countsLiveThenShowsAbortedEntry() {
+        val id = TimerService.engine.start(sessionStore(context).load().first())
+        ActivityScenario.launch(MainActivity::class.java).use {
+            rule.onNodeWithText("● Toggl zählt mit: Beispiel").performScrollTo().assertExists()
+            // A real run would need a minute to stay; MainActivity set the real rule on start.
+            TimerService.engine.keepStopped = { true }
+            TimerService.engine.stop(id)
+            rule.waitForIdle()
+            rule.onNodeWithText("Gestoppt").assertExists()
+            rule.onNodeWithText("abgebrochen", substring = true).performScrollTo().assertExists()
+            rule.onNodeWithText("✓ In Toggl: Beispiel").performScrollTo().assertExists()
+            assertEquals(listOf("GET me", "GET me/time_entries/current", "POST workspaces/7/time_entries", "PUT workspaces/7/time_entries/1"), calls)
+
+            rule.onNodeWithText("Aus Toggl löschen").performScrollTo().performClick()
+            rule.onNodeWithText("Aus Toggl gelöscht").performScrollTo().assertExists()
+            assertEquals("DELETE workspaces/7/time_entries/1", calls.last())
+        }
+    }
+}

@@ -36,7 +36,7 @@ import kotlinx.coroutines.delay
  */
 class FlashActivity : ComponentActivity() {
 
-    private class Flash(val title: String, val text: String, val finished: Boolean, val millis: Long, val color: Int)
+    private class Flash(val runId: Long, val title: String, val text: String, val finished: Boolean, val millis: Long, val color: Int)
 
     private var flash by mutableStateOf<Flash?>(null)
     /** The phone was unlocked during a flash: leave once the flash is over. */
@@ -48,34 +48,56 @@ class FlashActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Screen off: go, so the next step change launches the activity afresh. Bringing back an instance
+     * that sat behind the dark screen does not always turn the display on; a new one reliably does.
+     * The power button brings the countdown back through [TimerService]'s screen-on receiver.
+     */
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         alive = true
         ContextCompat.registerReceiver(this, unlocked, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_NOT_EXPORTED)
+        ContextCompat.registerReceiver(this, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
         show(intent)
         // A flash has painted the window in its colour (see show); the countdown starts dark.
         if (flash == null) window.setBackgroundDrawable(ColorDrawable(CLOCK_BACKGROUND))
         setContent {
             WassertigerTheme {
-                val run by TimerService.engine.state.collectAsState()
+                // On screen already: flash at every change by itself. A full-screen intent would only
+                // bring a banner, as the system does not launch one over a lit screen again.
+                LaunchedEffect(Unit) {
+                    var seen = emptyMap<Long, Pair<Int, Int>>()
+                    TimerService.engine.runs.collect { now ->
+                        now.forEach { run ->
+                            val was = seen[run.id]
+                            if (was != null && was != (run.index to run.round) && visible) flashFor(run)
+                        }
+                        seen = now.associate { it.id to (it.index to it.round) }
+                    }
+                }
+                val runs by TimerService.engine.runs.collectAsState()
+                val active = runs.filter { !it.finished }
                 val f = flash
-                val r = run
                 when {
                     f != null -> {
                         LaunchedEffect(f) {
                             delay(f.millis)
                             endFlash()
                         }
-                        FlashContent(f.title, f.text, f.finished, f.color, Modifier.clickable { endFlash() })
+                        RunFlash(TimerService.engine, f.runId, f.title, f.text, f.finished, f.color, Modifier.clickable { endFlash() })
                     }
-                    r == null -> LaunchedEffect(Unit) { finish() }
+                    runs.isEmpty() -> LaunchedEffect(Unit) { finish() }
                     // The "Fertig!" flash is on its way; leave only if it does not come.
-                    r.finished -> LaunchedEffect(Unit) {
+                    active.isEmpty() -> LaunchedEffect(Unit) {
                         delay(2000)
                         finish()
                     }
                     else -> Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                        RunScreen(r, TimerService.engine, hint = "") {
+                        RunScreen(active, TimerService.engine, hint = "") {
                             TextButton(onClick = ::unlock, modifier = Modifier.padding(top = 16.dp)) { Text("Entsperren") }
                         }
                     }
@@ -94,6 +116,7 @@ class FlashActivity : ComponentActivity() {
         getSystemService(NotificationManager::class.java).cancel(TimerService.ID_CLOCK)
         val title = intent.getStringExtra(EXTRA_TITLE) ?: return
         flash = Flash(
+            intent.getLongExtra(EXTRA_RUN_ID, -1),
             title,
             intent.getStringExtra(EXTRA_TEXT).orEmpty(),
             intent.getBooleanExtra(EXTRA_FINISHED, false),
@@ -106,13 +129,29 @@ class FlashActivity : ComponentActivity() {
         setBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL)
     }
 
+    private fun flashFor(run: RunState) {
+        val (title, text) = run.flashText()
+        flash = Flash(run.id, title, text, run.finished, run.session.flashMillis, run.session.flashColor)
+        window.setBackgroundDrawable(ColorDrawable(0xFF000000.toInt() or (if (run.finished) DONE_GREEN_RGB else run.session.flashColor)))
+        setBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        visible = true
+    }
+
+    override fun onPause() {
+        visible = false
+        super.onPause()
+    }
+
     private fun endFlash() {
         val f = flash ?: return
         flash = null
         // The countdown follows at the usual brightness, so it does not dazzle at night.
         setBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-        val run = TimerService.engine.state.value
-        if (f.finished || leaveAfterFlash || run == null || run.finished) finish()
+        if (f.finished || leaveAfterFlash || TimerService.engine.active.isEmpty()) finish()
     }
 
     private fun setBrightness(value: Float) {
@@ -134,10 +173,12 @@ class FlashActivity : ComponentActivity() {
     override fun onDestroy() {
         alive = false
         unregisterReceiver(unlocked)
+        unregisterReceiver(screenOff)
         super.onDestroy()
     }
 
     companion object {
+        const val EXTRA_RUN_ID = "run"
         const val EXTRA_TITLE = "title"
         const val EXTRA_TEXT = "text"
         const val EXTRA_FINISHED = "finished"
@@ -147,6 +188,10 @@ class FlashActivity : ComponentActivity() {
 
         /** Whether the activity is up (possibly behind a dark screen); the power button then shows it anyway. */
         @Volatile var alive = false
+            private set
+
+        /** On screen: it flashes at a change by itself, no full-screen intent needed. */
+        @Volatile var visible = false
             private set
     }
 }

@@ -37,6 +37,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.MainScope
 
 fun sessionStore(context: Context): SessionStore {
     val app = context.applicationContext
@@ -51,12 +52,30 @@ fun sessionStore(context: Context): SessionStore {
     })
 }
 
+/** The Toggl token and what was booked last, beside the sessions. */
+fun settingsStore(context: Context): SettingsStore {
+    val prefs = context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    return SettingsStore(object : SessionStorage {
+        override fun read(): String? = prefs.getString("settings_v1", null)
+        override fun write(json: String) = prefs.edit().putString("settings_v1", json).apply()
+    })
+}
+
+/** Set by tests to talk to a stand-in for Toggl. */
+internal var tracker: TogglTracker? = null
+
+/** Process-wide like [TimerService.engine]: the service feeds it, the screens show what it did. */
+fun togglTracker(context: Context): TogglTracker =
+    tracker ?: TogglTracker(settingsStore(context), MainScope()).also { tracker = it }
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         val store = sessionStore(this)
+        val settings = settingsStore(this)
+        TimerService.engine.keepStopped = keepForToggl(settings)
         setContent {
             val context = LocalContext.current
             val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -64,6 +83,8 @@ class MainActivity : ComponentActivity() {
                 WassertigerApp(
                     store = store,
                     engine = TimerService.engine,
+                    settings = settings,
+                    toggl = togglTracker(context),
                     onStart = { session ->
                         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.POST_NOTIFICATIONS,
