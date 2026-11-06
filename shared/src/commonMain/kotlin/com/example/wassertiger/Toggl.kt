@@ -190,6 +190,10 @@ data class TogglRun(
      * they are given (then the time so far is booked, from the start).
      */
     val waiting: Boolean = false,
+    /** The run is over (finished or stopped). */
+    val ended: Boolean = false,
+    /** [TogglTracker.onReport] has told about it. */
+    val reported: Boolean = false,
 ) {
     /** Counting in Toggl right now. */
     val live: Boolean get() = segments.any { it.running && it.end == null }
@@ -230,6 +234,12 @@ class TogglTracker(
     /** Requests under way; touched on the main thread only, like everything here. */
     private val jobs = mutableListOf<Job>()
 
+    /**
+     * Tells once per run when it is over: saved in Toggl ([TogglRun.synced]), or still waiting for
+     * its description or project ([TogglRun.waiting]). Android posts a notification.
+     */
+    var onReport: (TogglRun) -> Unit = {}
+
     fun onEvent(event: TimerEvent, run: RunState) {
         val id = run.id
         val now = wallClockMillis()
@@ -244,7 +254,11 @@ class TogglTracker(
                 val first = if (run.step?.track != false) listOf(TogglSegment(run.startedAt)) else emptyList()
                 change(id) { TogglRun(id, s.name, description, project, first, waiting = s.togglAsks) }
             }
-            TimerEvent.PauseChanged -> change(id) { t -> if (run.paused) t?.close(now) else t?.openIf(run.step?.track != false, now) }
+            TimerEvent.PauseChanged -> {
+                // Set per session: Toggl may count on through the pause button.
+                if (!run.session.togglPauseStops) return
+                change(id) { t -> if (run.paused) t?.close(now) else t?.openIf(run.step?.track != false, now) }
+            }
             TimerEvent.Step -> {
                 val t = runs.value[id] ?: return
                 val counting = t.segments.any { it.end == null }
@@ -252,18 +266,29 @@ class TogglTracker(
                 if (counting == tracked) return
                 change(id) { it?.close(now)?.openIf(tracked, now) }
             }
-            TimerEvent.Finished -> change(id) { t -> t?.close(run.endedAt) }
+            TimerEvent.Finished -> change(id) { t -> t?.close(run.endedAt)?.copy(ended = true) }
             TimerEvent.Stopped -> change(id) { t ->
                 when {
                     t == null -> null
                     // Dropped after moments (started by mistake): leaves no trace. One that stays on
                     // screen as "Gestoppt" (see keepForToggl) stays in Toggl.
                     !run.stopped && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
-                    else -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(aborted = true)
+                    else -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(aborted = true, ended = true)
                 }
             }
         }
+        report(id)
         sync(id)
+    }
+
+    /** See [onReport]. */
+    private fun report(id: Long) {
+        val t = runs.value[id] ?: return
+        if (!t.ended || t.reported || t.deleted || t.segments.isEmpty()) return
+        if (!t.waiting && !t.synced) return
+        // Waiting runs are told about again once they are saved.
+        if (!t.waiting) change(id) { it?.copy(reported = true) }
+        onReport(t)
     }
 
     /**
@@ -394,6 +419,7 @@ class TogglTracker(
                 }
             }
             change(id) { it?.copy(error = null) }
+            report(id)
             // A pause or the end may have come while this ran: their requests are queued behind.
         } catch (e: TogglException) {
             change(id) { it?.copy(error = e.message) }

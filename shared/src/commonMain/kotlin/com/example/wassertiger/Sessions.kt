@@ -81,6 +81,8 @@ data class Session(
     val togglProject: TogglProject? = null,
     /** Asks for the project at every run instead of using [togglProject]. */
     val togglAskProject: Boolean = false,
+    /** The pause button pauses Toggl too (ends the entry, Weiter starts a new one); off: Toggl counts on. */
+    val togglPauseStops: Boolean = true,
 ) {
     /** Something to fill in at every run before (or after) it goes to Toggl. */
     val togglAsks: Boolean get() = togglAskDescription || togglAskProject
@@ -201,9 +203,9 @@ fun vibrationPattern(seconds: Int, buzz: Buzz): LongArray {
 /** Ready-made sessions offered as templates; each call hands out fresh ids. */
 fun presets(): List<Session> = listOf(
     Session(name = "Atemübung", steps = listOf(Step(5, "Einatmen"), Step(5, "Ausatmen")), rounds = 30),
-    // Breaks stay out of Toggl; what the focus was is asked every time.
+    // What the Pomodoro was for is asked every time; it counts as a whole, breaks included.
     Session(
-        name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause", track = false)), rounds = 4,
+        name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4,
         togglAskDescription = true, togglAskProject = true,
     ),
     Session(name = "Alle 5 Sekunden", steps = listOf(Step(5)), rounds = ENDLESS),
@@ -318,6 +320,7 @@ class SessionStore(private val storage: SessionStorage) {
                 togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
                 togglProject = o["togglProject"]?.let { readProject(it) },
                 togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
+                togglPauseStops = o["togglPauseStops"]?.jsonPrimitive?.boolean ?: true,
             )
         }
     }
@@ -343,6 +346,7 @@ class SessionStore(private val storage: SessionStorage) {
                     put("togglAskDescription", session.togglAskDescription)
                     session.togglProject?.let { put("togglProject", writeProject(it)) }
                     put("togglAskProject", session.togglAskProject)
+                    put("togglPauseStops", session.togglPauseStops)
                     put("steps", writeSteps(session.steps))
                 })
             }

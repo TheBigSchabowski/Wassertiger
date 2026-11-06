@@ -64,9 +64,42 @@ fun settingsStore(context: Context): SettingsStore {
 /** Set by tests to talk to a stand-in for Toggl. */
 internal var tracker: TogglTracker? = null
 
-/** Process-wide like [TimerService.engine]: the service feeds it, the screens show what it did. */
-fun togglTracker(context: Context): TogglTracker =
-    tracker ?: TogglTracker(settingsStore(context), MainScope()).also { tracker = it }
+/**
+ * Process-wide like [TimerService.engine]: the service feeds it, the screens show what it did. At
+ * the end of a run a notification says it is saved in Toggl, or that it still waits for its name.
+ */
+fun togglTracker(context: Context): TogglTracker = tracker ?: TogglTracker(settingsStore(context), MainScope()).also {
+    val app = context.applicationContext
+    it.onReport = { run -> notifyToggl(app, run) }
+    tracker = it
+}
+
+private const val CHANNEL_TOGGL = "toggl"
+
+internal fun notifyToggl(context: Context, run: TogglRun) {
+    val nm = context.getSystemService(NotificationManager::class.java)
+    nm.createNotificationChannel(
+        android.app.NotificationChannel(CHANNEL_TOGGL, "Toggl", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            setSound(null, null)
+            enableVibration(false)
+        },
+    )
+    val time = formatDuration((run.millis() / 1000).toInt())
+    val what = listOfNotNull(run.description, run.project?.name, time, "abgebrochen".takeIf { run.aborted }).joinToString(" · ")
+    val open = android.app.PendingIntent.getActivity(
+        context, 0, Intent(context, MainActivity::class.java),
+        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+    )
+    val notification = android.app.Notification.Builder(context, CHANNEL_TOGGL)
+        .setSmallIcon(R.drawable.ic_stat_timer)
+        .setContentTitle(if (run.waiting) "Für Toggl noch eintragen" else "✓ In Toggl gespeichert")
+        .setContentText(if (run.waiting) "${run.sessionName} · $time – tippen zum Eintragen" else what)
+        .setContentIntent(open)
+        .setAutoCancel(true)
+        .build()
+    // One per run: "noch eintragen" turns into "gespeichert".
+    nm.notify(1000 + (run.runId % 1000).toInt(), notification)
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

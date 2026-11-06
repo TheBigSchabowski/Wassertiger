@@ -507,6 +507,7 @@ private fun EditorScreen(
     var togglAskDescription by remember { mutableStateOf(initial.togglAskDescription) }
     var togglProject by remember { mutableStateOf(initial.togglProject) }
     var togglAskProject by remember { mutableStateOf(initial.togglAskProject) }
+    var togglPauseStops by remember { mutableStateOf(initial.togglPauseStops) }
     var hexText by remember { mutableStateOf(formatHexColor(initial.flashColor)) }
     val music = initial.music
     // Music intervals run for minutes, so they are typed in minutes.
@@ -565,6 +566,7 @@ private fun EditorScreen(
         togglAskDescription = togglAskDescription,
         togglProject = togglProject,
         togglAskProject = togglAskProject,
+        togglPauseStops = togglPauseStops,
     )
     var templateSaved by remember { mutableStateOf(false) }
 
@@ -852,8 +854,16 @@ private fun EditorScreen(
                                 label = { Text("jedes Mal eingeben") },
                             )
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                            Switch(checked = togglPauseStops, onCheckedChange = { togglPauseStops = it })
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (togglPauseStops) "Pause-Knopf pausiert auch Toggl" else "Toggl zählt bei Pause weiter",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                         if (rows.size > 1) {
-                            Text("Erfasst werden", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+                            Text("Erfasst werden (optional)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 rows.forEachIndexed { i, row ->
                                     FilterChip(
