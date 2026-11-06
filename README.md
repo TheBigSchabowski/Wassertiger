@@ -57,7 +57,8 @@ gegeben hast (anfangs der Session-Name). Ein Tipp auf „● Toggl zählt mit: �
   gestoppt (aus Versehen gestartet) verschwindet er wieder.
 - Toggl kennt nur einen laufenden Timer: Läuft dort schon einer – dein eigener oder eine parallele Session –,
   bleibt er unangetastet, und die Session wird eingetragen, sobald sie pausiert oder endet.
-- Ohne Netz holt „Nochmal“ das Eintragen nach. Pro Session abschaltbar im Editor („In Toggl erfassen“).
+- Ohne Netz oder am Stundenlimit des kostenlosen Toggl-Plans holt die App das Eintragen von selbst nach
+  (oder sofort mit „Nochmal“). Pro Session abschaltbar im Editor („In Toggl erfassen“).
 
 **Restzeit bei gesperrtem Handy (Android):** Während eine Session läuft, zeigt die Power-Taste statt des
 Sperrbildschirms den großen Countdown mit Pause, Überspringen und Stopp. „Entsperren“ (oder Fingerabdruck)

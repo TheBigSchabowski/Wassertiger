@@ -2,6 +2,7 @@ package com.example.wassertiger
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,7 +39,8 @@ expect fun clockTime(millis: Long): String
 
 data class TogglProject(val id: Long, val name: String, val workspaceId: Long)
 
-class TogglException(message: String) : Exception(message)
+/** [retryAfterMs]: worth trying again after that long (no network, Toggl's hourly limit). */
+class TogglException(message: String, val retryAfterMs: Long? = null) : Exception(message)
 
 /** Tag on the entries of a session stopped before its end. */
 const val TOGGL_ABORTED_TAG = "abgebrochen"
@@ -51,11 +53,14 @@ typealias Http = suspend (method: String, url: String, user: String, password: S
 /** Toggl Track's API v9 with a personal API token (track.toggl.com/profile → API Token). */
 class Toggl(private val token: String, private val http: Http = ::httpRequest) {
 
-    /** The account's name, to show that the token works. */
-    suspend fun userName(): String = me()["fullname"]?.jsonPrimitive?.contentOrNull ?: "Toggl"
+    /** The account's name and default workspace, to show that the token works. */
+    suspend fun account(): Pair<String, Long> {
+        val me = me()
+        val workspace = me["default_workspace_id"]?.jsonPrimitive?.longOrNull ?: throw TogglException("Kein Toggl-Workspace gefunden")
+        return (me["fullname"]?.jsonPrimitive?.contentOrNull ?: "Toggl") to workspace
+    }
 
-    suspend fun defaultWorkspace(): Long =
-        me()["default_workspace_id"]?.jsonPrimitive?.longOrNull ?: throw TogglException("Kein Toggl-Workspace gefunden")
+    suspend fun defaultWorkspace(): Long = account().second
 
     /** Whether a timer runs in Toggl right now (Toggl allows one at a time). */
     suspend fun timerRunning(): Boolean = call("GET", "me/time_entries/current", null).let { it.isNotBlank() && it != "null" }
@@ -82,13 +87,15 @@ class Toggl(private val token: String, private val http: Http = ::httpRequest) {
             put("description", description)
             put("workspace_id", workspace)
             project?.let { put("project_id", it.id) }
-            put("start", isoInstant(start))
+            // Whole seconds throughout: Toggl refuses a stop that does not match start + duration exactly.
+            val from = start / 1000
+            put("start", isoInstant(from * 1000))
             if (stop == null) {
                 put("duration", -1)
             } else {
-                val end = maxOf(stop, start + 1000)
-                put("stop", isoInstant(end))
-                put("duration", (end - start) / 1000)
+                val to = maxOf(stop / 1000, from + 1)
+                put("stop", isoInstant(to * 1000))
+                put("duration", to - from)
             }
             if (tags.isNotEmpty()) put("tags", buildJsonArray { tags.forEach { add(JsonPrimitive(it)) } })
         }
@@ -130,12 +137,20 @@ class Toggl(private val token: String, private val http: Http = ::httpRequest) {
         val result = try {
             http(method, "$BASE/$path", token, "api_token", body)
         } catch (e: Exception) {
-            throw TogglException("Keine Verbindung zu Toggl")
+            throw TogglException("Keine Verbindung zu Toggl", retryAfterMs = 60_000)
         }
         return when (result.code) {
             in 200..299 -> result.body
             401, 403 -> throw TogglException("Toggl lehnt den API-Token ab")
-            429 -> throw TogglException("Toggl ist gerade überlastet – gleich nochmal versuchen")
+            // The free plan allows only so many requests an hour to the account (/me) endpoints.
+            402 -> {
+                val seconds = Regex("reset in (\\d+) seconds").find(result.body)?.groupValues?.get(1)?.toLongOrNull() ?: 600
+                throw TogglException(
+                    "Toggl-Stundenlimit (kostenloser Plan) erreicht – geht in ca. ${(seconds + 59) / 60} min wieder",
+                    retryAfterMs = (seconds + 5) * 1000,
+                )
+            }
+            429 -> throw TogglException("Toggl ist gerade überlastet – gleich nochmal versuchen", retryAfterMs = 60_000)
             else -> throw TogglException("Toggl-Fehler ${result.code}: ${result.body.take(120)}")
         }
     }
@@ -202,9 +217,11 @@ class TogglTracker(
     val runs: StateFlow<Map<Long, TogglRun>> = _runs.asStateFlow()
 
     private val mutex = Mutex()
+    /** Tries again on its own after network trouble or Toggl's hourly limit, one per run. */
+    private val retries = mutableMapOf<Long, Job>()
+    private var projectCache: Pair<Long, List<TogglProject>>? = null
     /** Requests under way; touched on the main thread only, like everything here. */
     private val jobs = mutableListOf<Job>()
-    private var defaultWorkspace: Long? = null
 
     fun onEvent(event: TimerEvent, run: RunState) {
         val id = run.id
@@ -269,7 +286,17 @@ class TogglTracker(
     }
 
     /** Tries again what network trouble held up. */
-    fun retry(runId: Long) = sync(runId)
+    fun retry(runId: Long) {
+        retries.remove(runId)?.cancel()
+        sync(runId)
+    }
+
+    /** The projects for the menu, fetched at most every ten minutes (they count against Toggl's hourly limit). */
+    suspend fun projects(): List<TogglProject> {
+        val token = settings.togglToken ?: return emptyList()
+        projectCache?.let { (at, list) -> if (wallClockMillis() - at < 10 * 60_000) return list }
+        return client(token).projects().also { projectCache = wallClockMillis() to it }
+    }
 
     /** Waits for every request so far (tests). */
     suspend fun idle() {
@@ -298,10 +325,11 @@ class TogglTracker(
     }
 
     private suspend fun workspaceOf(t: TogglRun, toggl: Toggl): Long =
-        t.workspace ?: t.project?.workspaceId ?: defaultWorkspace ?: toggl.defaultWorkspace().also { defaultWorkspace = it }
+        t.workspace ?: t.project?.workspaceId ?: settings.togglWorkspace
+            ?: toggl.defaultWorkspace().also { settings.togglWorkspace = it }
 
     /** Brings Toggl in line with what the run did; one request at a time, in order. */
-    private fun sync(id: Long) = launch {
+    private fun sync(id: Long): Unit = launch {
         val token = settings.togglToken ?: return@launch
         val toggl = client(token)
         try {
@@ -317,8 +345,8 @@ class TogglTracker(
                 t = runs.value[id] ?: return@launch
                 val tags = if (t.aborted) listOf(TOGGL_ABORTED_TAG) else emptyList()
                 val synced = when {
-                    // Still going: count live, unless another timer runs in Toggl.
-                    s.end == null && s.entryId == null && !toggl.timerRunning() ->
+                    // Still going: count live, unless another timer runs in Toggl (or that cannot be told).
+                    s.end == null && s.entryId == null && noTimerRunning(toggl) ->
                         s.copy(entryId = toggl.create(workspace, t.description, t.project, s.start, null, emptyList()), running = true)
                     s.end == null -> s
                     s.entryId == null ->
@@ -340,7 +368,21 @@ class TogglTracker(
             // A pause or the end may have come while this ran: their requests are queued behind.
         } catch (e: TogglException) {
             change(id) { it?.copy(error = e.message) }
+            e.retryAfterMs?.let { wait ->
+                retries.remove(id)?.cancel()
+                retries[id] = scope.launch {
+                    delay(wait)
+                    retries.remove(id)
+                    sync(id)
+                }
+            }
         }
+    }
+
+    private suspend fun noTimerRunning(toggl: Toggl): Boolean = try {
+        !toggl.timerRunning()
+    } catch (e: TogglException) {
+        false // not live then: booked when it pauses or ends
     }
 }
 
@@ -359,7 +401,15 @@ class SettingsStore(private val storage: SessionStorage) {
 
     var togglToken: String?
         get() = read()["togglToken"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-        set(value) = write { if (value.isNullOrBlank()) remove("togglToken") else put("togglToken", JsonPrimitive(value.trim())) }
+        set(value) = write {
+            remove("togglWorkspace")
+            if (value.isNullOrBlank()) remove("togglToken") else put("togglToken", JsonPrimitive(value.trim()))
+        }
+
+    /** The account's default workspace, kept so it need not be asked for (see Toggl's hourly limit). */
+    var togglWorkspace: Long?
+        get() = read()["togglWorkspace"]?.jsonPrimitive?.longOrNull
+        set(value) = write { if (value == null) remove("togglWorkspace") else put("togglWorkspace", JsonPrimitive(value)) }
 
     /** Description and project booked last for [sessionName]. */
     fun lastEntry(sessionName: String): Pair<String, TogglProject?>? {

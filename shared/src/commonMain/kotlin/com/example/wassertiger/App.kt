@@ -1050,14 +1050,18 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
         Column(Modifier.padding(top = 16.dp).widthIn(max = 420.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             TextButton(onClick = { editing = !editing }) {
                 Text(
-                    (if (t.live) "● Toggl zählt mit: " else "Toggl: ") + t.label() +
-                        if (!t.live && t.error == null) " (wird eingetragen, sobald es geht)" else "",
+                    when {
+                        run.paused -> "Toggl pausiert: ${t.label()}"
+                        t.live -> "● Toggl zählt mit: ${t.label()}"
+                        // Another timer runs there, or Toggl could not be asked: booked at a pause or the end.
+                        else -> "Toggl: ${t.label()} (wird am Ende eingetragen)"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
                 )
             }
             t.error?.let { TogglError(it) { tracker.retry(run.id) } }
-            if (editing) TogglForm(token, t.description, t.project, "Übernehmen") { d, p ->
+            if (editing) TogglForm(tracker, t.description, t.project, "Übernehmen") { d, p ->
                 tracker.edit(run.id, d, p)
                 editing = false
             }
@@ -1079,7 +1083,7 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                     "Nicht erfasst · ${formatDuration((millis / 1000).toInt())} · ${clockTime(end - millis)}–${clockTime(end)}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                TogglForm(token, last?.first ?: run.session.name, last?.second, "Eintragen") { d, p -> tracker.book(run, d, p) }
+                TogglForm(tracker, last?.first ?: run.session.name, last?.second, "Eintragen") { d, p -> tracker.book(run, d, p) }
                 return@Column
             }
             if (t.deleted) {
@@ -1099,7 +1103,7 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 else -> Text("Wird übertragen …", style = MaterialTheme.typography.bodySmall)
             }
             if (editing) {
-                TogglForm(token, t.description, t.project, "Übernehmen") { d, p ->
+                TogglForm(tracker, t.description, t.project, "Übernehmen") { d, p ->
                     tracker.edit(run.id, d, p)
                     editing = false
                 }
@@ -1126,7 +1130,7 @@ private fun TogglError(message: String, onRetry: () -> Unit) {
 /** Description and project for Toggl; the projects are fetched only when their menu opens. */
 @Composable
 private fun TogglForm(
-    token: String,
+    tracker: TogglTracker,
     initialDescription: String,
     initialProject: TogglProject?,
     action: String,
@@ -1134,16 +1138,16 @@ private fun TogglForm(
 ) {
     var description by remember { mutableStateOf(initialDescription) }
     var project by remember { mutableStateOf(initialProject) }
-    var projects by remember(token) { mutableStateOf<List<TogglProject>?>(null) }
+    var projects by remember { mutableStateOf<List<TogglProject>?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(menuOpen) {
         if (menuOpen && projects == null) {
             try {
-                projects = Toggl(token).projects()
+                projects = tracker.projects()
             } catch (e: TogglException) {
                 error = e.message
-                menuOpen = false
+                projects = emptyList()
             }
         }
     }
@@ -1158,17 +1162,14 @@ private fun TogglForm(
         Box {
             OutlinedButton(onClick = { menuOpen = true }) { Text("Projekt: ${project?.name ?: "ohne"}") }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                val list = projects
-                if (list == null) {
-                    DropdownMenuItem(text = { Text("Lädt …") }, onClick = {}, enabled = false)
-                } else {
-                    (listOf<TogglProject?>(null) + list).forEach { p ->
-                        DropdownMenuItem(text = { Text(p?.name ?: "ohne Projekt") }, onClick = {
-                            project = p
-                            menuOpen = false
-                        })
-                    }
+                // "ohne Projekt" works even when the list cannot be loaded.
+                (listOf<TogglProject?>(null) + projects.orEmpty()).forEach { p ->
+                    DropdownMenuItem(text = { Text(p?.name ?: "ohne Projekt") }, onClick = {
+                        project = p
+                        menuOpen = false
+                    })
                 }
+                if (projects == null) DropdownMenuItem(text = { Text("Projekte laden …") }, onClick = {}, enabled = false)
             }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -1216,8 +1217,9 @@ private fun SettingsScreen(settings: SettingsStore, onClose: () -> Unit) {
                     busy = true
                     scope.launch {
                         status = try {
-                            val name = Toggl(token.trim()).userName()
+                            val (name, workspace) = Toggl(token.trim()).account()
                             settings.togglToken = token
+                            settings.togglWorkspace = workspace
                             connected = true
                             "✓ Verbunden als $name"
                         } catch (e: TogglException) {
