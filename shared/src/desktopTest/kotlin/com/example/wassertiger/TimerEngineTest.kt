@@ -247,6 +247,13 @@ class TimerEngineTest {
         assertEquals(pomodoro, store.load().single())
         // Endless sessions go in with one round.
         assertEquals(1, presets()[2].asBlock().block.size)
+
+        // Toggl settings and which intervals count survive saving, in blocks too.
+        val tracked = presets()[1].copy(togglProject = TogglProject(3, "Musik", 7), togglDescription = "Üben")
+        val withBlock = tracked.copy(steps = tracked.steps + presets()[0].asBlock().copy(track = false))
+        store.save(listOf(withBlock))
+        assertEquals(withBlock, store.load().single())
+        assertTrue(withBlock.expanded().steps.drop(2).none { it.track }, "a block left out leaves out its intervals")
     }
 
     @Test

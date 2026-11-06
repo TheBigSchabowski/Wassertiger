@@ -75,7 +75,8 @@ class TogglTest {
         override fun write(json: String) { saved = json }
     }).apply { togglToken = "token" }
 
-    private val pomodoro = presets()[1]
+    /** Fixed name, every interval counts. */
+    private val pomodoro = Session(name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4)
 
     /** Started [minutesAgo] and some odd milliseconds, as real runs are. */
     private fun run(id: Long, minutesAgo: Int, session: Session = pomodoro) =
@@ -149,7 +150,7 @@ class TogglTest {
     }
 
     @Test
-    fun editRenamesAndIsRemembered() = runBlocking {
+    fun editRenamesWhileItRuns() = runBlocking {
         val toggl = tracker(this)
         val r = run(5, minutesAgo = 3)
         toggl.onEvent(TimerEvent.Started, r)
@@ -159,21 +160,75 @@ class TogglTest {
         toggl.idle()
         assertEquals("Bachelorarbeit", server.running!!.description)
         assertEquals(9L, server.running!!.project)
-        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis()))
-        toggl.idle()
-
-        // The next Pomodoro counts under that name from the start.
-        toggl.onEvent(TimerEvent.Started, run(6, minutesAgo = 0))
-        toggl.idle()
-        assertEquals("Bachelorarbeit", server.running!!.description)
-        assertEquals(9L, server.running!!.project)
-
-        toggl.edit(6, "Bachelorarbeit", null)
+        toggl.edit(5, "Bachelorarbeit", null)
         toggl.idle()
         assertNull(server.running!!.project, "the project can be taken off again")
-        toggl.delete(6)
+        toggl.delete(5)
         toggl.idle()
         assertNull(server.running)
+
+        // A session with fixed settings keeps them; the rename was for that run only.
+        toggl.onEvent(TimerEvent.Started, run(6, minutesAgo = 0))
+        toggl.idle()
+        assertEquals("Pomodoro", server.running!!.description)
+    }
+
+    @Test
+    fun sessionSettingsDecideNameAndProject() = runBlocking {
+        val musik = TogglProject(3, "Musik", 7)
+        val toggl = tracker(this)
+        val breathing = presets()[0].copy(togglProject = musik, togglDescription = "Atmen")
+        toggl.onEvent(TimerEvent.Started, run(12, minutesAgo = 0, session = breathing))
+        toggl.idle()
+        assertEquals("Atmen", server.running!!.description)
+        assertEquals(3L, server.running!!.project)
+    }
+
+    @Test
+    fun pomodoroBreaksStayOut() = runBlocking {
+        val toggl = tracker(this)
+        val session = presets()[1].copy(togglAskDescription = false, togglAskProject = false).expanded()
+        val r = run(13, minutesAgo = 0, session = session)
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(13).live, "Fokus counts")
+        toggl.onEvent(TimerEvent.Step, r.copy(index = 1))
+        toggl.idle()
+        assertNull(server.running, "the break does not")
+        toggl.onEvent(TimerEvent.Step, r.copy(index = 0, round = 1))
+        toggl.idle()
+        assertTrue(server.running != null, "the next Fokus counts again")
+        toggl.onEvent(TimerEvent.Step, r.copy(index = 0, round = 2)) // skipped a break: nothing changes
+        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, index = 2, round = 3, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertEquals(2, server.entries.size, "one entry per Fokus, none for the break")
+        assertTrue(toggl.runs.value.getValue(13).synced)
+    }
+
+    @Test
+    fun askingSessionWaitsForItsName() = runBlocking {
+        val toggl = tracker(this)
+        settings.rememberEntry("Pomodoro", "Gitarre", TogglProject(3, "Musik", 7))
+        val ask = presets()[1]
+        val r = run(14, minutesAgo = 30, session = ask.expanded())
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.idle()
+        val waiting = toggl.runs.value.getValue(14)
+        assertTrue(waiting.waiting && !waiting.synced)
+        assertEquals("Gitarre" to "Musik", waiting.description to waiting.project?.name, "offers what was booked last time")
+        assertTrue(server.calls.isEmpty(), "nothing goes to Toggl yet")
+
+        toggl.onEvent(TimerEvent.Step, r.copy(index = 1))
+        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, index = 2, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertTrue(server.calls.isEmpty())
+        // Given at the end: the Fokus goes in as it was, the break stays out.
+        toggl.edit(14, "Song schreiben", TogglProject(3, "Musik", 7))
+        toggl.idle()
+        val e = server.entries.values.single()
+        assertEquals("Song schreiben", e.description)
+        assertEquals(3L, e.project)
+        assertTrue(toggl.runs.value.getValue(14).synced)
     }
 
     @Test
