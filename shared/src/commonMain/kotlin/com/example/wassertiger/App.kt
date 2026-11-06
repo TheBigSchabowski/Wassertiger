@@ -1132,7 +1132,14 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
     var editing by remember(run.id) { mutableStateOf(false) }
 
     if (!run.finished) {
-        if (t == null || t.deleted) return
+        if (t == null) return
+        if (t.deleted) {
+            Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Toggl: diesmal nicht erfasst", style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = { tracker.setTracked(run.id, true) }) { Text("Doch erfassen") }
+            }
+            return
+        }
         if (t.waiting) {
             // The session asks every time: fill in now and it counts from the start, or at the end.
             Card(
@@ -1146,7 +1153,10 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TogglForm(tracker, t.description, t.project, "Übernehmen") { d, p -> tracker.edit(run.id, d, p) }
+                    TogglForm(
+                        tracker, t.description, t.project, "Übernehmen",
+                        skip = "Diesmal nicht erfassen" to { tracker.setTracked(run.id, false) },
+                    ) { d, p -> tracker.edit(run.id, d, p) }
                 }
             }
             return
@@ -1165,7 +1175,13 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 )
             }
             t.error?.let { TogglError(it) { tracker.retry(run.id) } }
-            if (editing) TogglForm(tracker, t.description, t.project, "Übernehmen") { d, p ->
+            if (editing) TogglForm(
+                tracker, t.description, t.project, "Übernehmen",
+                skip = "Diesmal nicht erfassen" to {
+                    tracker.setTracked(run.id, false)
+                    editing = false
+                },
+            ) { d, p ->
                 tracker.edit(run.id, d, p)
                 editing = false
             }
@@ -1173,6 +1189,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
         return
     }
 
+    // Toggl switched off for this session: nothing to offer.
+    if (t == null && !run.session.toggl) return
     Card(
         Modifier.widthIn(max = 420.dp).fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1195,12 +1213,25 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                     if (t.segments.isEmpty()) "Nichts erfasst" else "Noch nicht in Toggl · ${t.span()}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                if (t.segments.isNotEmpty()) TogglForm(tracker, t.description, t.project, "Eintragen") { d, p -> tracker.edit(run.id, d, p) }
+                if (t.segments.isNotEmpty()) TogglForm(
+                    tracker, t.description, t.project, "Eintragen",
+                    skip = "Nicht eintragen" to { tracker.setTracked(run.id, false) },
+                ) { d, p -> tracker.edit(run.id, d, p) }
                 return@Column
             }
             if (t.deleted) {
-                Text(if (t.error == null) "Aus Toggl gelöscht" else "Wird aus Toggl gelöscht …", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    when {
+                        t.error != null -> "Wird aus Toggl genommen …"
+                        t.segments.isEmpty() -> "Nichts erfasst"
+                        else -> "Nicht in Toggl · ${t.span()}"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 t.error?.let { TogglError(it) { tracker.retry(run.id) } }
+                if (t.segments.isNotEmpty() && t.error == null) {
+                    OutlinedButton(onClick = { tracker.setTracked(run.id, true) }) { Text(if (t.waiting) "Doch eintragen …" else "Doch eintragen") }
+                }
                 return@Column
             }
             Text(t.span() + if (t.aborted) " · abgebrochen" else "", style = MaterialTheme.typography.bodyMedium)
@@ -1246,6 +1277,8 @@ private fun TogglForm(
     initialDescription: String,
     initialProject: TogglProject?,
     action: String,
+    /** A second, quieter button: its label and what it does ("Diesmal nicht erfassen"). */
+    skip: Pair<String, () -> Unit>? = null,
     onDone: (String, TogglProject?) -> Unit,
 ) {
     var description by remember { mutableStateOf(initialDescription) }
@@ -1259,7 +1292,10 @@ private fun TogglForm(
             modifier = Modifier.fillMaxWidth(),
         )
         TogglProjectMenu(project, tracker::projects) { project = it }
-        Button(enabled = description.isNotBlank(), onClick = { onDone(description.trim(), project) }) { Text(action) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(enabled = description.isNotBlank(), onClick = { onDone(description.trim(), project) }) { Text(action) }
+            skip?.let { (label, onSkip) -> TextButton(onClick = onSkip) { Text(label) } }
+        }
     }
 }
 

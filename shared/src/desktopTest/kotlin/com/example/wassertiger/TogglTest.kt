@@ -297,4 +297,28 @@ class TogglTest {
         assertEquals("Toggl-Stundenlimit (kostenloser Plan) erreicht – geht in ca. 20 min wieder", e.message)
         assertEquals(1_195_000L, e.retryAfterMs)
     }
+
+    @Test
+    fun leftOutThisTimeAndTakenBackIn() = runBlocking {
+        val toggl = tracker(this)
+        val r = run(15, minutesAgo = 10)
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.idle()
+        assertTrue(server.running != null)
+        toggl.setTracked(15, false)
+        toggl.idle()
+        assertTrue(server.entries.isEmpty(), "out of Toggl, the live entry too")
+        toggl.onEvent(TimerEvent.PauseChanged, r.copy(pausedRemaining = 1, pausedAt = monotonicMillis()))
+        toggl.onEvent(TimerEvent.PauseChanged, r)
+        toggl.idle()
+        assertTrue(server.entries.isEmpty(), "stays out while it runs on")
+
+        toggl.setTracked(15, true)
+        toggl.idle()
+        assertEquals(2, server.entries.size, "the time so far is booked, and it counts on live")
+        assertTrue(toggl.runs.value.getValue(15).live)
+        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(15).synced)
+    }
 }

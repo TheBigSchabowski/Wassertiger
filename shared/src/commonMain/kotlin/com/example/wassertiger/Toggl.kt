@@ -292,8 +292,14 @@ class TogglTracker(
     }
 
     /** Takes run [runId] out of Toggl. */
-    fun delete(runId: Long) {
-        change(runId) { it?.copy(deleted = true) }
+    fun delete(runId: Long) = setTracked(runId, false)
+
+    /**
+     * Leaves run [runId] out of Toggl this time (what went in already is taken out again), or with
+     * [on] takes it back in: the time counted so far is booked then, and it counts on from there.
+     */
+    fun setTracked(runId: Long, on: Boolean) {
+        change(runId) { it?.copy(deleted = !on, error = null) }
         sync(runId)
     }
 

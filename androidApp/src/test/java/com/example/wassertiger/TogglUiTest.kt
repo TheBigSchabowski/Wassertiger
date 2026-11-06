@@ -70,8 +70,13 @@ class TogglUiTest {
             assertEquals(listOf("GET me", "GET me/time_entries/current", "POST workspaces/7/time_entries", "PUT workspaces/7/time_entries/1"), calls)
 
             rule.onNodeWithText("Aus Toggl löschen").performScrollTo().performClick()
-            rule.onNodeWithText("Aus Toggl gelöscht").performScrollTo().assertExists()
+            rule.onNodeWithText("Nicht in Toggl", substring = true).performScrollTo().assertExists()
             assertEquals("DELETE workspaces/7/time_entries/1", calls.last())
+
+            // Changed one's mind: back in, as it was.
+            rule.onNodeWithText("Doch eintragen").performScrollTo().performClick()
+            rule.onNodeWithText("✓ In Toggl: Beispiel").performScrollTo().assertExists()
+            assertEquals("POST workspaces/7/time_entries", calls.last())
         }
     }
 }
