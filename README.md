@@ -52,16 +52,18 @@ stellt jede Session im Editor unter „Toggl“ ein:
 - **In Toggl erfassen** – aus = diese Session nie.
 - **Projekt** fest (z. B. Atemübung → Musik) oder *jedes Mal wählen*; **Beschreibung** fest (leer = Session-Name)
   oder *jedes Mal eingeben*.
-- **Erfasst werden** – welche Intervalle zählen; bei Pomodoro z. B. nur „Fokus“, die Pausen nicht
-  (der Editor zeigt die erfasste Zeit, z. B. 1:40:00 statt 2:00:00).
+- **Pause-Knopf pausiert auch Toggl** – Standard; aus = Toggl zählt bei Pause einfach weiter.
+- **Erfasst werden (optional)** – standardmäßig zählen alle Intervalle (ein Pomodoro = 2 Stunden). Wer will,
+  wählt einzelne ab; der Editor zeigt dann die erfasste Zeit.
 
 Beim Laufen: Alles fest → die Session zählt sofort **live** in Toggl mit. Fragt sie etwas *jedes Mal*, steht unter
 dem Countdown „Für Toggl“ – gleich ausgefüllt zählt sie ab Start mit, sonst trägst du am Ende ein (vorgeschlagen
 wird, was du für diese Session zuletzt eingetragen hast). „Diesmal nicht erfassen“ lässt einen einzelnen Lauf
 weg (bei festen Sessions per Tipp auf „● Toggl zählt mit“), „Doch erfassen“ holt ihn zurück.
 
-- **Pause** beendet den Eintrag, **Weiter** startet einen neuen – Pausen zählen nicht, ebenso wenig nicht erfasste Intervalle.
-- **Ende:** Zeit, Beschreibung, Projekt – mit „Ändern“ und „Aus Toggl löschen“ / „Doch eintragen“.
+- **Pause** beendet den Eintrag, **Weiter** startet einen neuen (wenn so eingestellt).
+- **Ende:** eine Benachrichtigung „✓ In Toggl gespeichert: … · Musik · 2:00:00“ – oder „Für Toggl noch eintragen“,
+  wenn Beschreibung oder Projekt noch fehlen. Auf dem Fertig-Bildschirm: „Ändern“ und „Aus Toggl löschen“ / „Doch eintragen“.
 - **Stopp vor dem Ende:** der Eintrag endet genau dort und bekommt den Tag *abgebrochen*; unter einer Minute
   gestoppt verschwindet er wieder.
 - Toggl kennt nur einen laufenden Timer: Läuft dort schon einer – dein eigener oder eine parallele Session –,

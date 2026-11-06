@@ -8,6 +8,7 @@ import androidx.test.core.app.ActivityScenario
 import kotlinx.coroutines.MainScope
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -43,6 +44,7 @@ class TogglUiTest {
                 }
             }
         }
+        tracker!!.onReport = { notifyToggl(context, it) }
         TimerService.engine.listener = { event, run -> togglTracker(context).onEvent(event, run) }
     }
 
@@ -68,6 +70,9 @@ class TogglUiTest {
             rule.onNodeWithText("abgebrochen", substring = true).performScrollTo().assertExists()
             rule.onNodeWithText("✓ In Toggl: Beispiel").performScrollTo().assertExists()
             assertEquals(listOf("GET me", "GET me/time_entries/current", "POST workspaces/7/time_entries", "PUT workspaces/7/time_entries/1"), calls)
+            val posted = org.robolectric.Shadows.shadowOf(context.getSystemService(android.app.NotificationManager::class.java)).allNotifications
+                .map { it.extras.getString(android.app.Notification.EXTRA_TITLE) to it.extras.getString(android.app.Notification.EXTRA_TEXT) }
+            assertTrue(posted.toString(), ("✓ In Toggl gespeichert" to "Beispiel · 0 s · abgebrochen") in posted)
 
             rule.onNodeWithText("Aus Toggl löschen").performScrollTo().performClick()
             rule.onNodeWithText("Nicht in Toggl", substring = true).performScrollTo().assertExists()

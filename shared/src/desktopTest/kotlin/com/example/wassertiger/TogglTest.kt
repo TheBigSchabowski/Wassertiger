@@ -185,9 +185,14 @@ class TogglTest {
     }
 
     @Test
-    fun pomodoroBreaksStayOut() = runBlocking {
+    fun breaksLeftOutOnRequest() = runBlocking {
         val toggl = tracker(this)
-        val session = presets()[1].copy(togglAskDescription = false, togglAskProject = false).expanded()
+        val preset = presets()[1]
+        assertTrue(preset.steps.all { it.track }, "by default the whole Pomodoro counts, breaks included")
+        val session = preset.copy(
+            togglAskDescription = false, togglAskProject = false,
+            steps = listOf(preset.steps[0], preset.steps[1].copy(track = false)),
+        ).expanded()
         val r = run(13, minutesAgo = 0, session = session)
         toggl.onEvent(TimerEvent.Started, r)
         toggl.idle()
@@ -320,5 +325,44 @@ class TogglTest {
         toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis()))
         toggl.idle()
         assertTrue(toggl.runs.value.getValue(15).synced)
+    }
+
+    @Test
+    fun pauseButtonCanLeaveTogglCounting() = runBlocking {
+        val toggl = tracker(this)
+        val r = run(16, minutesAgo = 5, session = pomodoro.copy(togglPauseStops = false))
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.onEvent(TimerEvent.PauseChanged, r.copy(pausedRemaining = 1, pausedAt = monotonicMillis()))
+        toggl.onEvent(TimerEvent.PauseChanged, r)
+        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertEquals(1, server.entries.size, "one entry straight through")
+    }
+
+    @Test
+    fun tellsOnceWhenSavedOrStillWaiting() = runBlocking {
+        val toggl = tracker(this)
+        val told = mutableListOf<String>()
+        toggl.onReport = { told += if (it.waiting) "warten" else "gespeichert" }
+        val r = run(17, minutesAgo = 5)
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.idle()
+        assertTrue(told.isEmpty(), "nothing while it runs")
+        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertEquals(listOf("gespeichert"), told)
+        toggl.edit(17, "Anders", null)
+        toggl.idle()
+        assertEquals(listOf("gespeichert"), told, "once")
+
+        told.clear()
+        val ask = run(18, minutesAgo = 5, session = presets()[1].expanded())
+        toggl.onEvent(TimerEvent.Started, ask)
+        toggl.onEvent(TimerEvent.Finished, ask.copy(finished = true, index = 2, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertEquals(listOf("warten"), told)
+        toggl.edit(18, "Song", null)
+        toggl.idle()
+        assertEquals(listOf("warten", "gespeichert"), told)
     }
 }
