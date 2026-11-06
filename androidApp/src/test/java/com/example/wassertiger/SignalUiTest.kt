@@ -36,7 +36,7 @@ class SignalUiTest {
     private val context = RuntimeEnvironment.getApplication()
 
     @After
-    fun stopRun() = TimerService.engine.stop()
+    fun stopRun() = TimerService.engine.stopAll()
 
     @Test
     fun editorSetsLightOnlyAndTone() {
@@ -102,7 +102,7 @@ class SignalUiTest {
             rule.onNodeWithText("Intervall 1 / 6").assertExists()
             rule.onNodeWithText("Entsperren").assertExists()
 
-            TimerService.engine.stop()
+            TimerService.engine.stopAll()
             rule.waitForIdle()
             scenario.onActivity { assertTrue(it.isFinishing) }
         }

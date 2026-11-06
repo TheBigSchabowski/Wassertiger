@@ -6,5 +6,7 @@ import androidx.compose.runtime.Composable
 
 actual fun monotonicMillis(): Long = SystemClock.elapsedRealtime()
 
+actual fun wallClockMillis(): Long = System.currentTimeMillis()
+
 @Composable
 actual fun PlatformBackHandler(onBack: () -> Unit) = BackHandler(onBack = onBack)

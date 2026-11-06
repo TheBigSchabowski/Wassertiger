@@ -17,6 +17,15 @@ Intervalle tippt man in Sekunden. Da die Zahlentastatur keinen Doppelpunkt hat, 
 Minuten ab (`5,` = 5:00, `5,30` = 5:30). Ein **Punkt** schaltet das Feld auf Minuten-Eingabe: Es wird geleert und
 füllt sich von links als MM:SS (`0530` = 5:30, `05` allein = 5 Minuten); ein zweiter Punkt schaltet zurück.
 
+**Session einfügen:** Im Editor unter „Intervall hinzufügen“ → „Session einfügen“ kommt eine ganze andere
+Session (gleicher Art, mit allen Runden) als *ein* Intervall hinein – z. B. die Atemübung statt der
+Pomodoro-Pause. Sie lässt sich wie jedes Intervall verschieben und löschen; beim Laufen zählt jedes ihrer
+Intervalle einzeln.
+
+**Parallel:** Während eine Session läuft, führt „+ Parallel starten“ zurück zur Liste; „Start“ lässt dort eine
+weitere Session daneben laufen (oben steht, was gerade läuft, „Zur Anzeige“ geht zurück). Jede hat ihre
+eigenen Knöpfe, auf Android ihre eigene Benachrichtigung. Musik spielt immer nur die älteste Musik-Session.
+
 Eigene Vorlagen: im Editor „Als Vorlage speichern“. Sie stehen dann unter „Meine Vorlagen“; „Neu daraus“
 legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie.
 
@@ -33,6 +42,22 @@ Pro Session einstellbar (Editor → „Signal beim Wechsel“):
 - **Ton** – Aus (Standard), *Am Ende* oder *Bei jedem Wechsel*; Klang Piep, Glocke, Gong oder Holzblock
   (Tippen spielt ihn vor). Am Ende kommen drei Töne aufsteigend. Der Ton mischt sich unter die Musik,
   ohne sie anzuhalten; auf Android gilt die Medienlautstärke.
+
+Das Aufleuchten zählt die Restzeit des neuen Intervalls live herunter, ebenso der Hinweis oben, wenn das
+Display schon an ist.
+
+**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Ab dann zählt jede
+Session in Toggl **live mit**, solange sie läuft – unter der Beschreibung und dem Projekt, die du ihr zuletzt
+gegeben hast (anfangs der Session-Name). Ein Tipp auf „● Toggl zählt mit: …“ benennt sie um, auch mitten im Lauf.
+
+- **Pause** beendet den Eintrag, **Weiter** startet einen neuen – Pausen zählen nicht.
+- **Ende:** der Eintrag stoppt; der Fertig-Bildschirm zeigt Zeit, Beschreibung und Projekt, mit „Ändern“ und
+  „Aus Toggl löschen“.
+- **Stopp vor dem Ende:** der Eintrag endet genau dort und bekommt den Tag *abgebrochen*. Unter einer Minute
+  gestoppt (aus Versehen gestartet) verschwindet er wieder.
+- Toggl kennt nur einen laufenden Timer: Läuft dort schon einer – dein eigener oder eine parallele Session –,
+  bleibt er unangetastet, und die Session wird eingetragen, sobald sie pausiert oder endet.
+- Ohne Netz holt „Nochmal“ das Eintragen nach. Pro Session abschaltbar im Editor („In Toggl erfassen“).
 
 **Restzeit bei gesperrtem Handy (Android):** Während eine Session läuft, zeigt die Power-Taste statt des
 Sperrbildschirms den großen Countdown mit Pause, Überspringen und Stopp. „Entsperren“ (oder Fingerabdruck)

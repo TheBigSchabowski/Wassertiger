@@ -30,20 +30,21 @@ import javax.swing.SwingUtilities
 
 private val isMac = System.getProperty("os.name").startsWith("Mac")
 
-private fun dataFile(): File {
+private fun dataFile(name: String): File {
     val home = System.getProperty("user.home")
     val dir = if (isMac) {
         File(home, "Library/Application Support/Wassertiger")
     } else {
         File(System.getenv("XDG_CONFIG_HOME") ?: "$home/.config", "wassertiger")
     }
-    return File(dir, "sessions.json")
+    return File(dir, name)
 }
 
-private object FileStorage : SessionStorage {
-    override fun read(): String? = dataFile().takeIf { it.exists() }?.readText()
+/** sessions.json, or settings.json for the Toggl token. */
+private class FileStorage(private val name: String) : SessionStorage {
+    override fun read(): String? = dataFile(name).takeIf { it.exists() }?.readText()
     override fun write(json: String) {
-        val file = dataFile()
+        val file = dataFile(name)
         file.parentFile.mkdirs()
         val tmp = File(file.parentFile, "${file.name}.tmp")
         tmp.writeText(json)
@@ -78,7 +79,7 @@ private class StayAwake {
     }
 }
 
-private data class Flash(val title: String, val text: String, val finished: Boolean, val millis: Long, val color: Int)
+private data class Flash(val runId: Long, val title: String, val text: String, val finished: Boolean, val millis: Long, val color: Int)
 
 private data class PracticeRequest(val seconds: Int, val title: String?)
 
@@ -147,8 +148,10 @@ fun main(args: Array<String>) {
 }
 
 private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = application {
-    val store = remember { SessionStore(FileStorage) }
-    val engine = remember { TimerEngine(MainScope()) }
+    val store = remember { SessionStore(FileStorage("sessions.json")) }
+    val settings = remember { SettingsStore(FileStorage("settings.json")) }
+    val engine = remember { TimerEngine(MainScope()).apply { keepStopped = keepForToggl(settings) } }
+    val toggl = remember { TogglTracker(settings, MainScope()) }
     val stayAwake = remember { StayAwake() }
     val music = remember { MusicPlayer(LiveStream(::LineSink)) { DrumSamples.load(::bundledResource) } }
     val chimes = remember { ChimePlayer(::LineSink) }
@@ -160,19 +163,23 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
 
     LaunchedEffect(engine) {
         engine.listener = { event, state ->
-            music.follow(state.takeIf { event != TimerEvent.Stopped })
+            toggl.onEvent(event, state)
+            // One drone at a time: the oldest music session still going plays.
+            music.follow(engine.active.firstOrNull { it.session.music })
+            val (t, s) = state.flashText()
             when (event) {
+                // Started again for a parallel run: replaces the helper, the machine stays awake.
                 TimerEvent.Started -> stayAwake.start()
                 TimerEvent.Step -> {
                     chimes.signal(state.session, finish = false)
-                    state.flashText().let { (t, s) -> flash = Flash(t, s, false, state.session.flashMillis, state.session.flashColor) }
+                    flash = Flash(state.id, t, s, false, state.session.flashMillis, state.session.flashColor)
                 }
                 TimerEvent.Finished -> {
                     chimes.signal(state.session, finish = true)
-                    state.flashText().let { (t, s) -> flash = Flash(t, s, true, state.session.flashMillis, state.session.flashColor) }
-                    stayAwake.stop()
+                    flash = Flash(state.id, t, s, true, state.session.flashMillis, state.session.flashColor)
+                    if (engine.active.isEmpty()) stayAwake.stop()
                 }
-                TimerEvent.Stopped -> stayAwake.stop()
+                TimerEvent.Stopped -> if (engine.active.isEmpty()) stayAwake.stop()
                 TimerEvent.PauseChanged -> {}
             }
         }
@@ -194,7 +201,9 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
             WassertigerApp(
                 store = store,
                 engine = engine,
-                onStart = engine::start,
+                settings = settings,
+                toggl = toggl,
+                onStart = { engine.start(it) },
                 runHint = { session ->
                     "Spotify & Co. laufen ungestört weiter – bei jedem Wechsel leuchtet\n" +
                         "ein Hinweis über allen Fenstern auf. Der Bildschirm bleibt an." +
@@ -224,7 +233,7 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
                 delay(f.millis)
                 flash = null
             }
-            FlashContent(f.title, f.text, f.finished, f.color)
+            RunFlash(engine, f.runId, f.title, f.text, f.finished, f.color)
         }
     }
 }
