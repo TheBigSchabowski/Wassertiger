@@ -23,6 +23,8 @@ class TogglTest {
         val entries = mutableMapOf<Long, Entry>()
         val calls = mutableListOf<String>()
         var offline = false
+        /** Toggl's hourly limit of the free plan, which hits the account (/me) endpoints. */
+        var meLimited = false
         private var nextId = 100L
 
         val running: Entry? get() = entries.values.firstOrNull { it.stop == null }
@@ -33,8 +35,14 @@ class TogglTest {
             calls += "$method $path"
             val o = body?.let { Json.parseToJsonElement(it).jsonObject }
             when {
+                meLimited && path.startsWith("me") ->
+                    HttpResult(402, "You have hit your hourly limit for API calls. Your quota will reset in 1190 seconds.")
                 path == "me" -> HttpResult(200, """{"fullname":"Test","default_workspace_id":7}""")
                 path == "me/time_entries/current" -> HttpResult(200, running?.let { """{"id":${it.id}}""" } ?: "null")
+                // Like Toggl: start + duration must land exactly on stop.
+                method == "POST" && o!!["stop"] != null && java.time.Instant.parse(o.getValue("start").jsonPrimitive.content)
+                    .plusSeconds(o.getValue("duration").jsonPrimitive.long) != java.time.Instant.parse(o.getValue("stop").jsonPrimitive.content) ->
+                    HttpResult(400, "\"Stop and duration mismatch\"")
                 method == "POST" -> {
                     val stop = o!!["stop"]?.jsonPrimitive?.content
                     if (stop == null) running?.stop = "auto"
@@ -69,8 +77,9 @@ class TogglTest {
 
     private val pomodoro = presets()[1]
 
+    /** Started [minutesAgo] and some odd milliseconds, as real runs are. */
     private fun run(id: Long, minutesAgo: Int, session: Session = pomodoro) =
-        RunState(session, index = 0, stepEndAt = monotonicMillis() + 60_000, id = id, startedAt = wallClockMillis() - minutesAgo * 60_000L)
+        RunState(session, index = 0, stepEndAt = monotonicMillis() + 60_000, id = id, startedAt = wallClockMillis() - minutesAgo * 60_000L - 737)
 
     private fun tracker(scope: kotlinx.coroutines.CoroutineScope) = TogglTracker(settings, scope) { Toggl(it, server.http) }
 
@@ -206,5 +215,31 @@ class TogglTest {
         val e = server.entries.values.single()
         assertEquals("Nachgetragen", e.description)
         assertTrue(e.stop != null)
+    }
+
+    @Test
+    fun hourlyLimitStillBooksTheRun() = runBlocking {
+        settings.togglWorkspace = 7
+        server.meLimited = true
+        val toggl = tracker(this)
+        val r = run(11, minutesAgo = 25)
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.idle()
+        val t = toggl.runs.value.getValue(11)
+        assertFalse(t.live, "cannot tell whether a timer runs: not live")
+        assertNull(t.error)
+        toggl.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(11).synced)
+        assertTrue(server.entries.values.single().stop != null, "booked at the end through the workspace endpoint")
+        assertTrue(server.calls.none { it == "GET me" }, "the workspace is kept, not asked for")
+    }
+
+    @Test
+    fun hourlyLimitSaysWhenItGoesOnAgain() = runBlocking {
+        server.meLimited = true
+        val e = runCatching { Toggl("token", server.http).projects() }.exceptionOrNull() as TogglException
+        assertEquals("Toggl-Stundenlimit (kostenloser Plan) erreicht – geht in ca. 20 min wieder", e.message)
+        assertEquals(1_195_000L, e.retryAfterMs)
     }
 }
