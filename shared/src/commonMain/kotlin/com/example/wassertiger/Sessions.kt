@@ -71,9 +71,9 @@ data class Session(
     val chime: Chime = Chime.BEEP,
     /** Colour of the flash at an interval change, 0xRRGGBB; the end always flashes green. */
     val flashColor: Int = AMBER_RGB,
-    /** Counts in Toggl while it runs, if Toggl is connected (see [TogglTracker]). */
-    val toggl: Boolean = true,
-    /** What it is called in Toggl; blank = the session's name. */
+    /** Counts in Toggl while it runs, if Toggl is connected (see [TogglTracker]); ticked per session. */
+    val toggl: Boolean = false,
+    /** What it is called in Toggl; blank = none with a project ("Musik" alone), else the session's name. */
     val togglDescription: String = "",
     /** Asks for the description at every run instead of using [togglDescription]. */
     val togglAskDescription: Boolean = false,
@@ -88,7 +88,7 @@ data class Session(
     val togglAsks: Boolean get() = togglAskDescription || togglAskProject
 
     /** The description a run goes to Toggl under, unless it asks. */
-    val togglName: String get() = togglDescription.ifBlank { name }
+    val togglName: String get() = togglDescription.ifBlank { if (togglProject != null) "" else name }
 
     fun musicSettings(step: Step) = MusicSettings(
         root = step.drone ?: 9,
@@ -315,7 +315,12 @@ class SessionStore(private val storage: SessionStorage) {
                 tone = o["tone"]?.jsonPrimitive?.content.let { n -> ToneMode.entries.firstOrNull { it.name == n } } ?: ToneMode.OFF,
                 chime = o["chime"]?.jsonPrimitive?.content.let { n -> Chime.entries.firstOrNull { it.name == n } } ?: Chime.BEEP,
                 flashColor = o["flashColor"]?.jsonPrimitive?.content?.let(::parseHexColor) ?: AMBER_RGB,
-                toggl = o["toggl"]?.jsonPrimitive?.boolean ?: true,
+                // Before 1.9.0 every session counted in Toggl ("toggl" was always true): only those
+                // given a project or description of their own keep counting.
+                toggl = o["togglOn"]?.jsonPrimitive?.boolean ?: (
+                    o["toggl"]?.jsonPrimitive?.boolean == true &&
+                        (o["togglProject"] != null || !o["togglDescription"]?.jsonPrimitive?.contentOrNull.isNullOrBlank())
+                    ),
                 togglDescription = o["togglDescription"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
                 togglProject = o["togglProject"]?.let { readProject(it) },
@@ -341,7 +346,7 @@ class SessionStore(private val storage: SessionStorage) {
                     put("tone", session.tone.name)
                     put("chime", session.chime.name)
                     put("flashColor", formatHexColor(session.flashColor))
-                    put("toggl", session.toggl)
+                    put("togglOn", session.toggl)
                     put("togglDescription", session.togglDescription)
                     put("togglAskDescription", session.togglAskDescription)
                     session.togglProject?.let { put("togglProject", writeProject(it)) }

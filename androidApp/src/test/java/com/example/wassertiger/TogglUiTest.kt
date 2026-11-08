@@ -3,6 +3,7 @@ package com.example.wassertiger
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import kotlinx.coroutines.MainScope
@@ -59,7 +60,7 @@ class TogglUiTest {
 
     @Test
     fun countsLiveThenShowsAbortedEntry() {
-        val id = TimerService.engine.start(sessionStore(context).load().first())
+        val id = TimerService.engine.start(sessionStore(context).load().first().copy(toggl = true))
         ActivityScenario.launch(MainActivity::class.java).use {
             rule.onNodeWithText("● Toggl zählt mit: Beispiel").performScrollTo().assertExists()
             // A real run would need a minute to stay; MainActivity set the real rule on start.
@@ -82,6 +83,26 @@ class TogglUiTest {
             rule.onNodeWithText("Doch eintragen").performScrollTo().performClick()
             rule.onNodeWithText("✓ In Toggl: Beispiel").performScrollTo().assertExists()
             assertEquals("POST workspaces/7/time_entries", calls.last())
+        }
+    }
+
+    @Test
+    fun asksBeforeTheStart() {
+        val ask = Session(
+            name = "Üben", steps = listOf(Step(10 * 60)), toggl = true,
+            togglAskDescription = true, togglAskProject = true,
+        )
+        sessionStore(context).save(listOf(ask))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            rule.onNodeWithText("Start").performClick()
+            rule.onNodeWithText("Üben – für Toggl").assertExists()
+            rule.onNodeWithText("Ohne Toggl starten").assertExists()
+            rule.onNodeWithText("Beschreibung").performTextReplacement("Tonleitern")
+            rule.onNodeWithText("Starten").performClick()
+            rule.onNodeWithText("Üben – für Toggl").assertDoesNotExist()
+            // The service does not run in the test: started here as it would.
+            TimerService.engine.start(ask)
+            rule.onNodeWithText("● Toggl zählt mit: Tonleitern").performScrollTo().assertExists()
         }
     }
 }

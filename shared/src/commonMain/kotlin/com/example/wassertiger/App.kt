@@ -34,10 +34,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -134,9 +136,23 @@ fun WassertigerApp(
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
     val onList = (runs.isEmpty() || picking) && editing == null && !settingsOpen
+    /** A session that wants its Toggl project and description before it starts. */
+    var choosing by remember { mutableStateOf<Session?>(null) }
     val start: (Session) -> Unit = {
-        picking = false
-        onStart(it)
+        if (togglToken != null && it.toggl && it.togglAsks) {
+            choosing = it
+        } else {
+            picking = false
+            onStart(it)
+        }
+    }
+    choosing?.let { session ->
+        TogglStartDialog(session, toggl, onDismiss = { choosing = null }) { description, project ->
+            toggl.choose(session, description, project)
+            choosing = null
+            picking = false
+            onStart(session)
+        }
     }
     // Key events need a focused node; the lists have no text fields, so the whole page takes focus.
     LaunchedEffect(onList) { if (onList) runCatching { focus.requestFocus() } }
@@ -504,9 +520,9 @@ private fun EditorScreen(
     var flashColor by remember { mutableStateOf(initial.flashColor) }
     var toggl by remember { mutableStateOf(initial.toggl) }
     var togglDescription by remember { mutableStateOf(initial.togglDescription) }
-    var togglAskDescription by remember { mutableStateOf(initial.togglAskDescription) }
     var togglProject by remember { mutableStateOf(initial.togglProject) }
-    var togglAskProject by remember { mutableStateOf(initial.togglAskProject) }
+    /** Project and description picked before every start instead of fixed. */
+    var togglAsk by remember { mutableStateOf(initial.togglAsks) }
     var togglPauseStops by remember { mutableStateOf(initial.togglPauseStops) }
     var hexText by remember { mutableStateOf(formatHexColor(initial.flashColor)) }
     val music = initial.music
@@ -563,9 +579,9 @@ private fun EditorScreen(
         flashColor = flashColor,
         toggl = toggl,
         togglDescription = togglDescription.trim(),
-        togglAskDescription = togglAskDescription,
+        togglAskDescription = togglAsk,
         togglProject = togglProject,
-        togglAskProject = togglAskProject,
+        togglAskProject = togglAsk,
         togglPauseStops = togglPauseStops,
     )
     var templateSaved by remember { mutableStateOf(false) }
@@ -817,42 +833,34 @@ private fun EditorScreen(
                 )
                 if (togglConnected) {
                     Text("Toggl", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = toggl, onCheckedChange = { toggl = it })
-                        Spacer(Modifier.width(8.dp))
+                    Row(
+                        Modifier.clickable { toggl = !toggl },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = toggl, onCheckedChange = { toggl = it })
                         Text("In Toggl erfassen")
                     }
                     if (toggl) {
-                        Text("Projekt", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            itemVerticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TogglProjectMenu(togglProject, loadProjects, enabled = !togglAskProject) { togglProject = it }
-                            FilterChip(
-                                selected = togglAskProject,
-                                onClick = { togglAskProject = !togglAskProject },
-                                label = { Text("jedes Mal wählen") },
-                            )
+                        Text("Projekt und Beschreibung", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = !togglAsk, onClick = { togglAsk = false }, label = { Text("Immer gleich") })
+                            FilterChip(selected = togglAsk, onClick = { togglAsk = true }, label = { Text("Vor jedem Start wählen") })
                         }
-                        Text("Beschreibung", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            itemVerticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            OutlinedTextField(
-                                value = togglDescription,
-                                onValueChange = { togglDescription = it },
-                                placeholder = { Text(name.ifBlank { "Name der Session" }) },
-                                enabled = !togglAskDescription,
-                                singleLine = true,
-                                modifier = Modifier.widthIn(min = 180.dp, max = 320.dp),
-                            )
-                            FilterChip(
-                                selected = togglAskDescription,
-                                onClick = { togglAskDescription = !togglAskDescription },
-                                label = { Text("jedes Mal eingeben") },
-                            )
+                        if (!togglAsk) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                itemVerticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TogglProjectMenu(togglProject, loadProjects) { togglProject = it }
+                                OutlinedTextField(
+                                    value = togglDescription,
+                                    onValueChange = { togglDescription = it },
+                                    label = { Text("Beschreibung") },
+                                    placeholder = { Text(if (togglProject != null) "ohne" else name.ifBlank { "Name der Session" }) },
+                                    singleLine = true,
+                                    modifier = Modifier.widthIn(min = 180.dp, max = 320.dp),
+                                )
+                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                             Switch(checked = togglPauseStops, onCheckedChange = { togglPauseStops = it })
@@ -881,11 +889,8 @@ private fun EditorScreen(
                         Text(
                             buildString {
                                 append(
-                                    if (togglAskDescription || togglAskProject) {
-                                        "Beim Start fragt die Session nach " +
-                                            listOfNotNull("Beschreibung".takeIf { togglAskDescription }, "Projekt".takeIf { togglAskProject })
-                                                .joinToString(" und ") +
-                                            " – gleich angegeben zählt Toggl ab Start mit, sonst trägst du am Ende ein."
+                                    if (togglAsk) {
+                                        "Beim Start wählst du Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
                                     } else {
                                         "Zählt in Toggl mit, solange die Session läuft."
                                     },
@@ -1265,8 +1270,29 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
     }
 }
 
-/** "Bachelorarbeit · Studium" */
-private fun TogglRun.label(): String = description + (project?.let { " · ${it.name}" } ?: "")
+/** "Bachelorarbeit · Studium", "Musik" without a description. */
+private fun TogglRun.label(): String = listOfNotNull(description.ifBlank { null }, project?.name).joinToString(" · ").ifEmpty { "ohne Beschreibung" }
+
+/**
+ * Before a session that asks for them starts: its Toggl project and description, offered as last
+ * time. "Ohne Toggl starten" starts it all the same, left out of Toggl.
+ */
+@Composable
+private fun TogglStartDialog(session: Session, tracker: TogglTracker, onDismiss: () -> Unit, onStart: (String?, TogglProject?) -> Unit) {
+    val (description, project) = remember(session.id) { tracker.suggestion(session) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${session.name} – für Toggl") },
+        text = {
+            TogglForm(
+                tracker, description, project, "Starten",
+                skip = "Ohne Toggl starten" to { onStart(null, null) },
+            ) { d, p -> onStart(d, p) }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
+    )
+}
 
 /** "1:40:00 · 10:00–12:00 (ohne Pausen)": the counted time and when. */
 private fun TogglRun.span(): String =
@@ -1282,6 +1308,7 @@ private fun TogglError(message: String, onRetry: () -> Unit) {
 }
 
 /** Description and project for Toggl; the projects are fetched only when their menu opens. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TogglForm(
     tracker: TogglTracker,
@@ -1295,16 +1322,18 @@ private fun TogglForm(
     var description by remember { mutableStateOf(initialDescription) }
     var project by remember { mutableStateOf(initialProject) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TogglProjectMenu(project, tracker::projects) { project = it }
         OutlinedTextField(
             value = description,
             onValueChange = { description = it },
             label = { Text("Beschreibung") },
+            // With a project, none is fine: "Musik" alone.
+            placeholder = if (project != null) ({ Text("ohne") }) else null,
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        TogglProjectMenu(project, tracker::projects) { project = it }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(enabled = description.isNotBlank(), onClick = { onDone(description.trim(), project) }) { Text(action) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+            Button(enabled = description.isNotBlank() || project != null, onClick = { onDone(description.trim(), project) }) { Text(action) }
             skip?.let { (label, onSkip) -> TextButton(onClick = onSkip) { Text(label) } }
         }
     }
@@ -1360,9 +1389,9 @@ private fun SettingsScreen(settings: SettingsStore, onClose: () -> Unit) {
     ) {
         Text("Toggl Track", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Mit Toggl verbunden, zählt jede Session in Toggl mit, solange sie läuft. Projekt, Beschreibung und welche " +
-                "Intervalle zählen (z. B. ohne die Pomodoro-Pausen), stellst du im Editor jeder Session ein – fest oder " +
-                "„jedes Mal“. Pausen zählen nicht; Stopp vor dem Ende beendet den Eintrag dort und markiert ihn „abgebrochen“. " +
+            "Toggl zählt nur bei den Sessions mit, bei denen du im Editor „In Toggl erfassen“ ankreuzt. Dort wählst du " +
+                "auch Projekt und Beschreibung – immer gleich (z. B. nur „Musik“) oder vor jedem Start – und welche " +
+                "Intervalle zählen. Stopp vor dem Ende beendet den Eintrag dort und markiert ihn „abgebrochen“. " +
                 "Den API-Token findest du in Toggl unter Profil → API Token (track.toggl.com/profile).",
             style = MaterialTheme.typography.bodyMedium,
         )

@@ -46,20 +46,23 @@ Pro Session einstellbar (Editor → „Signal beim Wechsel“):
 Das Aufleuchten zählt die Restzeit des neuen Intervalls live herunter, ebenso der Hinweis oben, wenn das
 Display schon an ist.
 
-**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Was in Toggl landet,
-stellt jede Session im Editor unter „Toggl“ ein:
+**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Toggl ist bei jeder
+Session erst einmal **aus** – nur Sessions, bei denen du im Editor unter „Toggl“ ankreuzt, landen dort:
 
-- **In Toggl erfassen** – aus = diese Session nie.
-- **Projekt** fest (z. B. Atemübung → Musik) oder *jedes Mal wählen*; **Beschreibung** fest (leer = Session-Name)
-  oder *jedes Mal eingeben*.
+- **In Toggl erfassen** – ankreuzen, damit diese Session in Toggl mitzählt.
+- **Projekt und Beschreibung** – *Immer gleich*: Projekt aus deiner Toggl-Liste wählen (z. B. nur „Musik“, die
+  Beschreibung darf dann leer bleiben; ohne Projekt gilt der Session-Name) – oder *Vor jedem Start wählen*.
 - **Pause-Knopf pausiert auch Toggl** – Standard; aus = Toggl zählt bei Pause einfach weiter.
 - **Erfasst werden (optional)** – standardmäßig zählen alle Intervalle (ein Pomodoro = 2 Stunden). Wer will,
   wählt einzelne ab; der Editor zeigt dann die erfasste Zeit.
 
-Beim Laufen: Alles fest → die Session zählt sofort **live** in Toggl mit. Fragt sie etwas *jedes Mal*, steht unter
-dem Countdown „Für Toggl“ – gleich ausgefüllt zählt sie ab Start mit, sonst trägst du am Ende ein (vorgeschlagen
-wird, was du für diese Session zuletzt eingetragen hast). „Diesmal nicht erfassen“ lässt einen einzelnen Lauf
-weg (bei festen Sessions per Tipp auf „● Toggl zählt mit“), „Doch erfassen“ holt ihn zurück.
+Beim Laufen: Alles fest → die Session zählt sofort **live** in Toggl mit. Bei *Vor jedem Start wählen* fragt „Start“
+erst nach Projekt und Beschreibung (vorgeschlagen wird, was du für diese Session zuletzt gewählt hast); „Ohne Toggl
+starten“ lässt den Lauf weg. Vom Widget gestartet steht die Frage unter dem Countdown – gleich ausgefüllt zählt sie
+ab Start mit, sonst trägst du am Ende ein. Per Tipp auf „● Toggl zählt mit“ lässt sich ein Lauf umbenennen oder
+weglassen, „Doch erfassen“ holt ihn zurück.
+
+Sessions von vor 1.9.0 behalten Toggl nur, wenn sie ein eigenes Projekt oder eine eigene Beschreibung hatten.
 
 - **Pause** beendet den Eintrag, **Weiter** startet einen neuen (wenn so eingestellt).
 - **Ende:** eine Benachrichtigung „✓ In Toggl gespeichert: … · Musik · 2:00:00“ – oder „Für Toggl noch eintragen“,
