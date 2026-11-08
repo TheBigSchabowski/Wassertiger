@@ -98,10 +98,13 @@ class TimerService : Service() {
             startForeground(ID_ONGOING, notification)
         }
         updateNotifications()
-        cpuLock?.takeIf { it.isHeld }?.release()
-        cpuLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Wassertiger:run").apply {
-            setReferenceCounted(false)
-            acquire(CPU_LOCK_MS)
+        // Only signals need the CPU awake; a quiet stopwatch reads the clock (which runs on in sleep) when looked at.
+        if (session.signals) {
+            cpuLock?.takeIf { it.isHeld }?.release()
+            cpuLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Wassertiger:run").apply {
+                setReferenceCounted(false)
+                acquire(CPU_LOCK_MS)
+            }
         }
         if (!screenOnRegistered) {
             ContextCompat.registerReceiver(this, screenOn, IntentFilter(Intent.ACTION_SCREEN_ON), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -116,7 +119,7 @@ class TimerService : Service() {
         when (event) {
             TimerEvent.Started -> vibrate(state, Buzz.START)
             TimerEvent.Step -> {
-                cpuLock?.acquire(CPU_LOCK_MS) // endless sessions may run past the initial timeout
+                if (state.session.signals) cpuLock?.acquire(CPU_LOCK_MS) // endless sessions may run past the initial timeout
                 // A stopwatch without a signal just counts on.
                 if (state.session.signals) {
                     vibrate(state, Buzz.STEP)
@@ -141,11 +144,26 @@ class TimerService : Service() {
                     }
                 } else {
                     updateNotifications()
+                    scope.launch {
+                        // The final signal plays first; then only what still signals keeps the CPU up.
+                        delay(maxOf(state.session.flashMillis + 500, buzzMs + 500, chimeMs + 500))
+                        releaseIfQuiet()
+                    }
                 }
             }
-            TimerEvent.Stopped -> if (engine.active.isEmpty()) shutdown() else updateNotifications()
+            TimerEvent.Stopped -> if (engine.active.isEmpty()) {
+                shutdown()
+            } else {
+                updateNotifications()
+                releaseIfQuiet()
+            }
         }
         Widgets.update(this)
+    }
+
+    /** Only quiet stopwatches left: nothing needs the CPU awake (see [start]). */
+    private fun releaseIfQuiet() {
+        if (engine.active.none { it.session.signals }) cpuLock?.takeIf { it.isHeld }?.release()
     }
 
     private fun shutdown() {
