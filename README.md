@@ -46,19 +46,20 @@ Pro Session einstellbar (Editor → „Signal beim Wechsel“):
 Das Aufleuchten zählt die Restzeit des neuen Intervalls live herunter, ebenso der Hinweis oben, wenn das
 Display schon an ist.
 
-**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Toggl ist bei jeder
-Session erst einmal **aus** – nur Sessions, bei denen du im Editor unter „Toggl“ ankreuzt, landen dort:
+**Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Jede Session wählt im
+Editor unter „Toggl“ eine von drei Möglichkeiten:
 
-- **In Toggl erfassen** – ankreuzen, damit diese Session in Toggl mitzählt.
-- **Projekt und Beschreibung** – *Immer gleich*: Projekt aus deiner Toggl-Liste wählen (z. B. nur „Musik“, die
-  Beschreibung darf dann leer bleiben; ohne Projekt gilt der Session-Name) – oder *Vor jedem Start wählen*.
-- **Pause-Knopf pausiert auch Toggl** – Standard; aus = Toggl zählt bei Pause einfach weiter.
-- **Erfasst werden (optional)** – standardmäßig zählen alle Intervalle (ein Pomodoro = 2 Stunden). Wer will,
-  wählt einzelne ab; der Editor zeigt dann die erfasste Zeit.
+- **Nicht erfassen** – Standard; die Session benutzt Toggl gar nicht.
+- **Immer gleich** – wird automatisch erfasst: ohne Angaben unter dem Session-Namen (z. B. „Dankbarkeit“), oder mit
+  Projekt aus deiner Toggl-Liste und optionaler Beschreibung (z. B. nur „Musik“).
+- **Vor dem Start fragen** – „Start“ fragt erst nach Projekt und Beschreibung (z. B. beim Pomodoro).
 
-Beim Laufen: Alles fest → die Session zählt sofort **live** in Toggl mit. Bei *Vor jedem Start wählen* fragt „Start“
-erst nach Projekt und Beschreibung (vorgeschlagen wird, was du für diese Session zuletzt gewählt hast); „Ohne Toggl
-starten“ lässt den Lauf weg. Vom Widget gestartet steht die Frage unter dem Countdown – gleich ausgefüllt zählt sie
+Erfasst wird die **ganze Session als ein Block** (ein Pomodoro = 2 Stunden). Wer nur einzelne Intervalle erfassen
+will, schaltet „Nur diese Intervalle erfassen“ ein und wählt sie aus. **Pause-Knopf pausiert auch Toggl** ist
+Standard; aus = Toggl zählt bei Pause einfach weiter.
+
+Beim Laufen: *Immer gleich* → die Session zählt sofort **live** in Toggl mit. Bei *Vor dem Start fragen* ist
+vorgeschlagen, was du für diese Session zuletzt gewählt hast; „Ohne Toggl starten“ lässt den Lauf weg. Vom Widget gestartet steht die Frage unter dem Countdown – gleich ausgefüllt zählt sie
 ab Start mit, sonst trägst du am Ende ein. Per Tipp auf „● Toggl zählt mit“ lässt sich ein Lauf umbenennen oder
 weglassen, „Doch erfassen“ holt ihn zurück.
 

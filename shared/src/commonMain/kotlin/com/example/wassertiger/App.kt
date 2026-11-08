@@ -39,7 +39,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -833,19 +832,13 @@ private fun EditorScreen(
                 )
                 if (togglConnected) {
                     Text("Toggl", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                    Row(
-                        Modifier.clickable { toggl = !toggl },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(checked = toggl, onCheckedChange = { toggl = it })
-                        Text("In Toggl erfassen")
+                    // Three ways: not at all (the default), always the same, or asked before every start.
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !toggl, onClick = { toggl = false }, label = { Text("Nicht erfassen") })
+                        FilterChip(selected = toggl && !togglAsk, onClick = { toggl = true; togglAsk = false }, label = { Text("Immer gleich") })
+                        FilterChip(selected = toggl && togglAsk, onClick = { toggl = true; togglAsk = true }, label = { Text("Vor dem Start fragen") })
                     }
                     if (toggl) {
-                        Text("Projekt und Beschreibung", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = !togglAsk, onClick = { togglAsk = false }, label = { Text("Immer gleich") })
-                            FilterChip(selected = togglAsk, onClick = { togglAsk = true }, label = { Text("Vor jedem Start wählen") })
-                        }
                         if (!togglAsk) {
                             FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -870,8 +863,20 @@ private fun EditorScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
-                        if (rows.size > 1) {
-                            Text("Erfasst werden (optional)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+                        // One block for the whole session unless some intervals are picked out on purpose.
+                        var someIntervals by remember { mutableStateOf(rows.any { !it.track }) }
+                        if (rows.size > 1) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                            Switch(checked = someIntervals, onCheckedChange = {
+                                someIntervals = it
+                                if (!it) rows.forEach { r -> r.track = true }
+                            })
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (someIntervals) "Nur diese Intervalle erfassen:" else "Ganze Session als ein Block",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        if (rows.size > 1 && someIntervals) {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 rows.forEachIndexed { i, row ->
                                     FilterChip(
@@ -890,9 +895,12 @@ private fun EditorScreen(
                             buildString {
                                 append(
                                     if (togglAsk) {
-                                        "Beim Start wählst du Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
+                                        "Beim Start fragt die App, was du machst – Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
                                     } else {
-                                        "Zählt in Toggl mit, solange die Session läuft."
+                                        "Wird automatisch erfasst als „" + listOfNotNull(
+                                            togglDescription.trim().ifBlank { if (togglProject != null) null else name.trim() },
+                                            togglProject?.name,
+                                        ).joinToString(" · ") + "“."
                                     },
                                 )
                                 if (rows.any { !it.track }) {
@@ -1389,9 +1397,9 @@ private fun SettingsScreen(settings: SettingsStore, onClose: () -> Unit) {
     ) {
         Text("Toggl Track", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Toggl zählt nur bei den Sessions mit, bei denen du im Editor „In Toggl erfassen“ ankreuzt. Dort wählst du " +
-                "auch Projekt und Beschreibung – immer gleich (z. B. nur „Musik“) oder vor jedem Start – und welche " +
-                "Intervalle zählen. Stopp vor dem Ende beendet den Eintrag dort und markiert ihn „abgebrochen“. " +
+            "Im Editor jeder Session unter „Toggl“: Nicht erfassen (Standard), Immer gleich (z. B. als „Dankbarkeit“ " +
+                "oder nur Projekt „Musik“) oder Vor dem Start fragen (z. B. Pomodoro). Erfasst wird die ganze Session als " +
+                "ein Block. Stopp vor dem Ende beendet den Eintrag dort und markiert ihn „abgebrochen“. " +
                 "Den API-Token findest du in Toggl unter Profil → API Token (track.toggl.com/profile).",
             style = MaterialTheme.typography.bodyMedium,
         )
