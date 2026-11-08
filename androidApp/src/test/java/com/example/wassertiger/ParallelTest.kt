@@ -76,7 +76,7 @@ class ParallelTest {
     fun stoppedRunOffersToggl() {
         settingsStore(context).togglToken = "test-token"
         TimerService.engine.keepStopped = { true }
-        val id = TimerService.engine.start(sessionStore(context).load().first())
+        val id = TimerService.engine.start(sessionStore(context).load().first().copy(toggl = true))
         TimerService.engine.stop(id)
         ActivityScenario.launch(MainActivity::class.java).use {
             rule.onNodeWithText("Gestoppt").assertExists()

@@ -76,7 +76,10 @@ class TogglTest {
     }).apply { togglToken = "token" }
 
     /** Fixed name, every interval counts. */
-    private val pomodoro = Session(name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4)
+    private val pomodoro = Session(name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4, toggl = true)
+
+    /** Preset [n] with Toggl ticked (off by default). */
+    private fun preset(n: Int) = presets()[n].copy(toggl = true)
 
     /** Started [minutesAgo] and some odd milliseconds, as real runs are. */
     private fun run(id: Long, minutesAgo: Int, session: Session = pomodoro) =
@@ -177,7 +180,7 @@ class TogglTest {
     fun sessionSettingsDecideNameAndProject() = runBlocking {
         val musik = TogglProject(3, "Musik", 7)
         val toggl = tracker(this)
-        val breathing = presets()[0].copy(togglProject = musik, togglDescription = "Atmen")
+        val breathing = preset(0).copy(togglProject = musik, togglDescription = "Atmen")
         toggl.onEvent(TimerEvent.Started, run(12, minutesAgo = 0, session = breathing))
         toggl.idle()
         assertEquals("Atmen", server.running!!.description)
@@ -187,7 +190,7 @@ class TogglTest {
     @Test
     fun breaksLeftOutOnRequest() = runBlocking {
         val toggl = tracker(this)
-        val preset = presets()[1]
+        val preset = preset(1)
         assertTrue(preset.steps.all { it.track }, "by default the whole Pomodoro counts, breaks included")
         val session = preset.copy(
             togglAskDescription = false, togglAskProject = false,
@@ -214,7 +217,7 @@ class TogglTest {
     fun askingSessionWaitsForItsName() = runBlocking {
         val toggl = tracker(this)
         settings.rememberEntry("Pomodoro", "Gitarre", TogglProject(3, "Musik", 7))
-        val ask = presets()[1]
+        val ask = preset(1)
         val r = run(14, minutesAgo = 30, session = ask.expanded())
         toggl.onEvent(TimerEvent.Started, r)
         toggl.idle()
@@ -356,7 +359,7 @@ class TogglTest {
         assertEquals(listOf("gespeichert"), told, "once")
 
         told.clear()
-        val ask = run(18, minutesAgo = 5, session = presets()[1].expanded())
+        val ask = run(18, minutesAgo = 5, session = preset(1).expanded())
         toggl.onEvent(TimerEvent.Started, ask)
         toggl.onEvent(TimerEvent.Finished, ask.copy(finished = true, index = 2, endedAt = wallClockMillis()))
         toggl.idle()
@@ -364,5 +367,61 @@ class TogglTest {
         toggl.edit(18, "Song", null)
         toggl.idle()
         assertEquals(listOf("warten", "gespeichert"), told)
+    }
+
+    @Test
+    fun offByDefault() = runBlocking {
+        val toggl = tracker(this)
+        toggl.onEvent(TimerEvent.Started, run(19, minutesAgo = 0, session = presets()[0]))
+        toggl.onEvent(TimerEvent.Started, run(20, minutesAgo = 0, session = Session(name = "Neu", steps = listOf(Step(30)))))
+        toggl.idle()
+        assertTrue(toggl.runs.value.isEmpty() && server.calls.isEmpty(), "only ticked sessions count")
+    }
+
+    @Test
+    fun projectAloneHasNoDescription() = runBlocking {
+        val toggl = tracker(this)
+        val musik = TogglProject(3, "Musik", 7)
+        toggl.onEvent(TimerEvent.Started, run(21, minutesAgo = 0, session = preset(0).copy(togglProject = musik)))
+        toggl.idle()
+        assertEquals("" to 3L, server.running!!.description to server.running!!.project, "just Musik")
+    }
+
+    @Test
+    fun pickedBeforeTheStart() = runBlocking {
+        val toggl = tracker(this)
+        val ask = preset(1).expanded()
+        val musik = TogglProject(3, "Musik", 7)
+        assertEquals("Pomodoro" to null, toggl.suggestion(ask), "nothing picked yet: the session's name")
+        toggl.choose(ask, "Gitarre", musik)
+        toggl.onEvent(TimerEvent.Started, run(22, minutesAgo = 0, session = ask))
+        toggl.idle()
+        val t = toggl.runs.value.getValue(22)
+        assertFalse(t.waiting, "nothing left to fill in")
+        assertTrue(t.live)
+        assertEquals("Gitarre" to 3L, server.running!!.description to server.running!!.project)
+        assertEquals("Gitarre" to musik, toggl.suggestion(ask), "offered next time")
+
+        // The choice is for one start only.
+        toggl.onEvent(TimerEvent.Started, run(23, minutesAgo = 0, session = ask))
+        assertTrue(toggl.runs.value.getValue(23).waiting)
+    }
+
+    @Test
+    fun startedWithoutToggl() = runBlocking {
+        val toggl = tracker(this)
+        val ask = preset(1).expanded()
+        toggl.choose(ask, null, null)
+        toggl.onEvent(TimerEvent.Started, run(24, minutesAgo = 0, session = ask))
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(24).deleted)
+        assertTrue(server.calls.isEmpty())
+        // Changed one's mind while it runs: asks for the name then.
+        toggl.setTracked(24, true)
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(24).waiting)
+        toggl.edit(24, "Lesen", null)
+        toggl.idle()
+        assertEquals("Lesen", server.running!!.description)
     }
 }

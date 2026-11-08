@@ -85,7 +85,7 @@ internal fun notifyToggl(context: Context, run: TogglRun) {
         },
     )
     val time = formatDuration((run.millis() / 1000).toInt())
-    val what = listOfNotNull(run.description, run.project?.name, time, "abgebrochen".takeIf { run.aborted }).joinToString(" · ")
+    val what = listOfNotNull(run.description.ifBlank { null }, run.project?.name, time, "abgebrochen".takeIf { run.aborted }).joinToString(" · ")
     val open = android.app.PendingIntent.getActivity(
         context, 0, Intent(context, MainActivity::class.java),
         android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,

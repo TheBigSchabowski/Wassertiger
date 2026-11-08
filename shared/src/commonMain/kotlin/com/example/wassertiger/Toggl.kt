@@ -233,6 +233,8 @@ class TogglTracker(
     private var projectCache: Pair<Long, List<TogglProject>>? = null
     /** Requests under way; touched on the main thread only, like everything here. */
     private val jobs = mutableListOf<Job>()
+    /** Picked in the app right before a start, by session id: what, or null for not this time, and when. */
+    private val chosen = mutableMapOf<String, Pair<Pair<String, TogglProject?>?, Long>>()
 
     /**
      * Tells once per run when it is over: saved in Toggl ([TogglRun.synced]), or still waiting for
@@ -240,19 +242,42 @@ class TogglTracker(
      */
     var onReport: (TogglRun) -> Unit = {}
 
+    /**
+     * What the next run of [session] goes to Toggl under, picked just before its start (see
+     * [Session.togglAsks]); a null [description] leaves that run out of Toggl.
+     */
+    fun choose(session: Session, description: String?, project: TogglProject?) {
+        if (description != null) settings.rememberEntry(session.name, description, project)
+        chosen[session.id] = description?.let { it to project } to wallClockMillis()
+    }
+
+    /** Description and project offered for a run of [s] that asks for them: as last time for this session. */
+    fun suggestion(s: Session): Pair<String, TogglProject?> {
+        val last = settings.lastEntry(s.name)
+        val description = if (s.togglAskDescription) last?.first ?: s.togglName else s.togglName
+        val project = if (s.togglAskProject && last != null) last.second else s.togglProject
+        return description to project
+    }
+
     fun onEvent(event: TimerEvent, run: RunState) {
         val id = run.id
         val now = wallClockMillis()
         when (event) {
             TimerEvent.Started -> {
                 val s = run.session
+                // A choice left over from a start that never came (a minute is plenty for the service).
+                val choice = chosen.remove(s.id)?.takeIf { now - it.second < 60_000 }
                 if (settings.togglToken == null || !s.toggl) return
-                // Asked for each time: offered as last time for this session.
-                val last = settings.lastEntry(s.name)
-                val description = if (s.togglAskDescription) last?.first ?: s.togglName else s.togglName
-                val project = if (s.togglAskProject) last?.second else s.togglProject
+                val (description, project) = choice?.first ?: suggestion(s)
                 val first = if (run.step?.track != false) listOf(TogglSegment(run.startedAt)) else emptyList()
-                change(id) { TogglRun(id, s.name, description, project, first, waiting = s.togglAsks) }
+                change(id) {
+                    TogglRun(
+                        id, s.name, description, project, first,
+                        waiting = s.togglAsks && choice?.first == null,
+                        // "Ohne Toggl starten": shows "Doch erfassen" while it runs.
+                        deleted = choice != null && choice.first == null,
+                    )
+                }
             }
             TimerEvent.PauseChanged -> {
                 // Set per session: Toggl may count on through the pause button.
@@ -388,6 +413,8 @@ class TogglTracker(
         try {
             var t = runs.value[id] ?: return@launch
             if (t.waiting && !t.deleted) return@launch
+            // Left out before anything went in: nothing to ask Toggl.
+            if (t.deleted && t.segments.none { it.entryId != null }) return@launch
             val workspace = workspaceOf(t, toggl)
             if (t.workspace == null) change(id) { it?.copy(workspace = workspace) }
             if (t.deleted) {

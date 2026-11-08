@@ -254,6 +254,17 @@ class TimerEngineTest {
         store.save(listOf(withBlock))
         assertEquals(withBlock, store.load().single())
         assertTrue(withBlock.expanded().steps.drop(2).none { it.track }, "a block left out leaves out its intervals")
+        store.save(listOf(withBlock.copy(toggl = true)))
+        assertTrue(store.load().single().toggl)
+
+        // Saved before 1.9.0, when every session had "toggl": true: only those set up for Toggl keep it.
+        saved = """[
+            {"id":"a","name":"Atmen","steps":[{"seconds":5}],"toggl":true,"togglDescription":""},
+            {"id":"b","name":"Üben","steps":[{"seconds":5}],"toggl":true,"togglProject":{"id":3,"name":"Musik","workspace":7}},
+            {"id":"c","name":"Lesen","steps":[{"seconds":5}],"toggl":true,"togglDescription":"Buch"},
+            {"id":"d","name":"Aus","steps":[{"seconds":5}],"toggl":false,"togglDescription":"Buch"}
+        ]"""
+        assertEquals(listOf(false, true, true, false), store.load().map { it.toggl })
     }
 
     @Test
