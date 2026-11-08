@@ -59,7 +59,7 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         engine.listener = ::onTimerEvent
-        engine.keepStopped = keepForToggl(settingsStore(this))
+        engine.keepStopped = keepStopped(settingsStore(this))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -117,9 +117,12 @@ class TimerService : Service() {
             TimerEvent.Started -> vibrate(state, Buzz.START)
             TimerEvent.Step -> {
                 cpuLock?.acquire(CPU_LOCK_MS) // endless sessions may run past the initial timeout
-                vibrate(state, Buzz.STEP)
-                chimes.signal(state.session, finish = false)
-                wakeScreen(state)
+                // A stopwatch without a signal just counts on.
+                if (state.session.signals) {
+                    vibrate(state, Buzz.STEP)
+                    chimes.signal(state.session, finish = false)
+                    wakeScreen(state)
+                }
                 updateNotifications()
             }
             TimerEvent.PauseChanged -> updateNotifications()
@@ -252,10 +255,11 @@ class TimerService : Service() {
         notifications.notify(ID_FLASH, builder.build())
     }
 
+    /** The interval's countdown, or a stopwatch's reading counting up. */
     private fun Notification.Builder.countDown(run: RunState): Notification.Builder =
         setUsesChronometer(true)
-            .setChronometerCountDown(true)
-            .setWhen(System.currentTimeMillis() + run.remainingMs())
+            .setChronometerCountDown(!run.session.stopwatch)
+            .setWhen(System.currentTimeMillis() + if (run.session.stopwatch) -run.elapsedMs() else run.remainingMs())
             .setShowWhen(true)
 
     /**
@@ -322,8 +326,12 @@ class TimerService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
         val step = s.step
         if (step != null) {
-            val label = listOf(step.name, "Schritt ${s.index + 1} / ${s.session.steps.size}", s.roundLabel)
-                .filter { it.isNotBlank() }.joinToString(" · ")
+            val label = if (s.session.stopwatch) {
+                s.session.summary()
+            } else {
+                listOf(step.name, "Schritt ${s.index + 1} / ${s.session.steps.size}", s.roundLabel)
+                    .filter { it.isNotBlank() }.joinToString(" · ")
+            }
             builder.setContentTitle(if (s.paused) "Pausiert – ${s.session.name}" else s.session.name)
                 .setContentText(label)
             if (!s.paused) {
@@ -335,7 +343,9 @@ class TimerService : Service() {
         builder.addAction(
             Notification.Action.Builder(null, if (s.paused) "Weiter" else "Pause", actionPendingIntent(this, ACTION_TOGGLE_PAUSE, s.id)).build()
         )
-        builder.addAction(Notification.Action.Builder(null, "Überspringen", actionPendingIntent(this, ACTION_SKIP, s.id)).build())
+        if (!s.session.stopwatch) {
+            builder.addAction(Notification.Action.Builder(null, "Überspringen", actionPendingIntent(this, ACTION_SKIP, s.id)).build())
+        }
         builder.addAction(Notification.Action.Builder(null, "Stopp", actionPendingIntent(this, ACTION_STOP, s.id)).build())
         return builder.build()
     }

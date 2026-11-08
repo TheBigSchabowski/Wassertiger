@@ -81,9 +81,22 @@ data class Session(
     val togglProject: TogglProject? = null,
     /** Asks for the project at every run instead of using [togglProject]. */
     val togglAskProject: Boolean = false,
-    /** The pause button pauses Toggl too (ends the entry, Weiter starts a new one); off: Toggl counts on. */
-    val togglPauseStops: Boolean = true,
+    /**
+     * The pause button pauses Toggl too (ends the entry, Weiter starts a new one); off (the default):
+     * Toggl counts on, so the whole session stays one block.
+     */
+    val togglPauseStops: Boolean = false,
+    /**
+     * Counts up until Stopp instead of down: its one endless interval is [signalEvery] long (see
+     * [stopwatchSteps]) and only signals when that is set.
+     */
+    val stopwatch: Boolean = false,
+    /** A stopwatch lights up / buzzes every this many seconds; 0 = never, a plain stopwatch. */
+    val signalEvery: Int = 0,
 ) {
+    /** Whether interval changes signal: a stopwatch without [signalEvery] never does. */
+    val signals: Boolean get() = !stopwatch || signalEvery > 0
+
     /** Something to fill in at every run before (or after) it goes to Toggl. */
     val togglAsks: Boolean get() = togglAskDescription || togglAskProject
 
@@ -128,13 +141,14 @@ data class Session(
 
     /** "vibriert es und das Display geht kurz an. Am Ende ein Gong." – what happens at a change. */
     fun signalText(): String {
+        if (!signals) return "die Stoppuhr zählt still hoch."
         val light = if (lightOnly) "leuchtet nur das Display auf, ohne Vibration." else "vibriert es und das Display geht kurz an."
         val sound = when (tone) {
             ToneMode.OFF -> ""
             ToneMode.END -> " Am Ende ertönt ${chime.article()}."
             ToneMode.EVERY -> " Dazu ertönt ${chime.article()}."
         }
-        return "bei jedem Wechsel $light$sound"
+        return (if (stopwatch) "alle ${formatDuration(signalEvery)} " else "bei jedem Wechsel ") + light + sound
     }
 }
 
@@ -245,8 +259,17 @@ fun formatDuration(seconds: Int): String {
     }
 }
 
+/** A stopwatch's one interval: the signal's period, or a day when it never signals. */
+fun stopwatchSteps(signalEvery: Int): List<Step> = listOf(Step(if (signalEvery > 0) signalEvery else STOPWATCH_QUIET_SECONDS))
+
+private const val STOPWATCH_QUIET_SECONDS = 24 * 3600
+
+/** A new stopwatch: counts up, no signal, Toggl off. */
+fun newStopwatch(): Session = Session(name = "Stoppuhr", steps = stopwatchSteps(0), rounds = ENDLESS, stopwatch = true)
+
 /** "2 Intervalle × 30 Runden · 5:00", for lists and summaries. */
 fun Session.summary(): String {
+    if (stopwatch) return "Stoppuhr" + if (signalEvery > 0) " · Signal alle ${formatDuration(signalEvery)}" else ""
     val intervals = if (steps.size == 1) "1 Intervall" else "${steps.size} Intervalle"
     return when {
         endless -> "$intervals · endlos wiederholt"
@@ -325,7 +348,10 @@ class SessionStore(private val storage: SessionStorage) {
                 togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
                 togglProject = o["togglProject"]?.let { readProject(it) },
                 togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
-                togglPauseStops = o["togglPauseStops"]?.jsonPrimitive?.boolean ?: true,
+                // "togglPauseStops" (before 1.10.0) was true for nearly everyone as the old default: not carried over.
+                togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
+                stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
+                signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
             )
         }
     }
@@ -351,7 +377,11 @@ class SessionStore(private val storage: SessionStorage) {
                     put("togglAskDescription", session.togglAskDescription)
                     session.togglProject?.let { put("togglProject", writeProject(it)) }
                     put("togglAskProject", session.togglAskProject)
-                    put("togglPauseStops", session.togglPauseStops)
+                    put("togglPauseSplits", session.togglPauseStops)
+                    if (session.stopwatch) {
+                        put("stopwatch", true)
+                        put("signalEvery", session.signalEvery)
+                    }
                     put("steps", writeSteps(session.steps))
                 })
             }

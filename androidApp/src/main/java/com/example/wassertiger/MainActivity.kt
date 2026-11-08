@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         val store = sessionStore(this)
         val settings = settingsStore(this)
-        TimerService.engine.keepStopped = keepForToggl(settings)
+        TimerService.engine.keepStopped = keepStopped(settings)
         setContent {
             val context = LocalContext.current
             val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
                     },
                     runHint = { session ->
                         "Du kannst das Handy sperren und Musik hören –\n" + session.signalText() +
-                            "\nDie Power-Taste zeigt die Restzeit auch bei gesperrtem Handy."
+                            "\nDie Power-Taste zeigt die " + (if (session.stopwatch) "Zeit" else "Restzeit") + " auch bei gesperrtem Handy."
                     },
                     onPreviewChime = TimerService.chimes::play,
                     header = { PermissionHints() },

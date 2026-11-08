@@ -41,6 +41,9 @@ data class RunState(
     val endedAt: Long = 0,
     /** Ended with Stopp before the last interval ran out. */
     val stopped: Boolean = false,
+    /** [monotonicMillis] at the start and at the end, for the stopwatch's reading (see [elapsedMs]). */
+    val startedMono: Long? = null,
+    val endedMono: Long? = null,
 ) {
     val step: Step? get() = session.steps.getOrNull(index)
     val lastRound: Boolean get() = !session.endless && round >= session.rounds - 1
@@ -64,6 +67,13 @@ data class RunState(
         val end = if (endedAt > 0) endedAt else wallNow
         val pause = pausedMs + (pausedAt?.let { now - it } ?: 0)
         return (end - startedAt - pause).coerceAtLeast(0)
+    }
+
+    /** A stopwatch's reading: running time, pauses left out, on the monotonic clock. */
+    fun elapsedMs(now: Long = monotonicMillis()): Long {
+        val origin = startedMono ?: return activeMillis(now = now)
+        val end = if (finished) endedMono ?: now else now
+        return (end - origin - pausedMs - (pausedAt?.let { end - it } ?: 0)).coerceAtLeast(0)
     }
 
     /** The current pause folded into [pausedMs], as when it ends. */
@@ -106,12 +116,14 @@ class TimerEngine(private val scope: CoroutineScope) {
     fun start(session: Session): Long {
         val expanded = session.expanded()
         if (expanded.steps.isEmpty()) return -1
+        val now = monotonicMillis()
         val s = RunState(
             session = expanded,
             index = 0,
-            stepEndAt = monotonicMillis() + expanded.steps[0].seconds * 1000L,
+            stepEndAt = now + expanded.steps[0].seconds * 1000L,
             id = nextId++,
             startedAt = wallClockMillis(),
+            startedMono = now,
         )
         // The new run is in before the old one goes, so nothing ever sees "no run left" and shuts down.
         val replaced = runs.value.filter { it.session.id == session.id }
@@ -151,7 +163,8 @@ class TimerEngine(private val scope: CoroutineScope) {
         if (s.finished) return dismiss(id)
         if (!keepStopped(s)) return drop(id)
         loops.remove(id)?.cancel()
-        val ended = s.pauseEnded(monotonicMillis()).copy(finished = true, stopped = true, endedAt = wallClockMillis())
+        val now = monotonicMillis()
+        val ended = s.pauseEnded(now).copy(finished = true, stopped = true, endedAt = wallClockMillis(), endedMono = now)
         replace(ended)
         listener(TimerEvent.Stopped, ended)
     }
@@ -217,6 +230,7 @@ class TimerEngine(private val scope: CoroutineScope) {
  * current step down ("4 s" … ) instead of naming its length, so a flash that stays up keeps up.
  */
 fun RunState.flashText(now: Long? = null): Pair<String, String> {
+    if (session.stopwatch) return formatClock(elapsedMs(now ?: monotonicMillis())) to session.name
     if (finished) return (if (stopped) "Gestoppt" else "Fertig!") to session.name
     val step = step ?: return "" to ""
     val position = if (session.steps.size > 1) "${index + 1} / ${session.steps.size}" else ""
@@ -230,4 +244,13 @@ fun RunState.flashText(now: Long? = null): Pair<String, String> {
     }
     return (clock ?: formatDuration(step.seconds)) to
         listOf(step.name, position, roundLabel).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+/** A stopwatch reading: "0:07", "12:34", "1:02:03". */
+fun formatClock(millis: Long): String {
+    val total = millis / 1000
+    val h = total / 3600
+    val m = total / 60 % 60
+    val sec = (total % 60).toString().padStart(2, '0')
+    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:$sec" else "$m:$sec"
 }

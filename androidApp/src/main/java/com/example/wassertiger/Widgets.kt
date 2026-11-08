@@ -68,6 +68,7 @@ object Widgets {
             views.setTextViewText(R.id.run_pause, context.getString(if (run.paused) R.string.widget_resume else R.string.widget_pause))
             views.setOnClickPendingIntent(R.id.run_pause, TimerService.actionPendingIntent(context, TimerService.ACTION_TOGGLE_PAUSE, run.id))
             views.setOnClickPendingIntent(R.id.run_skip, TimerService.actionPendingIntent(context, TimerService.ACTION_SKIP, run.id))
+            views.setViewVisibility(R.id.run_skip, if (run.session.stopwatch) View.GONE else View.VISIBLE)
             views.setOnClickPendingIntent(R.id.run_stop, TimerService.actionPendingIntent(context, TimerService.ACTION_STOP, run.id))
         }
 
@@ -123,6 +124,7 @@ object Widgets {
 
     /** "Einatmen · 1 / 2 · Runde 3 / 30"; music shows what to play and the sound. */
     private fun stepLabel(run: RunState): String {
+        if (run.session.stopwatch) return run.session.summary()
         val step = run.step ?: return ""
         val what = if (run.session.music) step.name.ifBlank { step.soundLabel() } else step.name
         val position = if (run.session.steps.size > 1) "${run.index + 1} / ${run.session.steps.size}" else ""
@@ -134,6 +136,11 @@ object Widgets {
      * redraw every second. Both sides tick on [SystemClock.elapsedRealtime] ([monotonicMillis]).
      */
     private fun showClock(views: RemoteViews, id: Int, run: RunState) {
+        if (run.session.stopwatch) {
+            views.setChronometer(id, SystemClock.elapsedRealtime() - run.elapsedMs(), null, !run.paused)
+            views.setChronometerCountDown(id, false)
+            return
+        }
         // Chronometer rounds down; +999 makes it show whole seconds left like the app does.
         val base = SystemClock.elapsedRealtime() + run.remainingMs() + 999
         views.setChronometer(id, base, null, !run.paused)

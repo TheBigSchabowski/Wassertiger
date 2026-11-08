@@ -39,6 +39,8 @@ class SignalTest {
         val light = session.copy(vibration = 0)
         assertTrue(light.lightOnly && light.flashMillis > session.flashMillis)
         assertEquals("bei jedem Wechsel vibriert es und das Display geht kurz an.", session.signalText())
+        assertEquals("alle 2 s vibriert es und das Display geht kurz an.", newStopwatch().copy(signalEvery = 2, steps = stopwatchSteps(2)).signalText())
+        assertEquals("die Stoppuhr zählt still hoch.", newStopwatch().signalText())
         assertEquals(
             "bei jedem Wechsel leuchtet nur das Display auf, ohne Vibration. Am Ende ertönt eine Glocke.",
             light.copy(tone = ToneMode.END, chime = Chime.BELL).signalText(),
