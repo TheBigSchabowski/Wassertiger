@@ -794,10 +794,10 @@ private fun EditorScreen(
                     }
                 }
                 Text(
-                    if (vibration == 0) {
-                        "Kein Vibrieren – das Display leuchtet bei jedem Wechsel 5 Sekunden auf."
-                    } else {
-                        "Am Ende eine Sekunde länger. Das Display geht dazu kurz an."
+                    when {
+                        vibration == 0 -> "Kein Vibrieren – das Display leuchtet bei jedem ${if (stopwatch) "Signal" else "Wechsel"} 5 Sekunden auf."
+                        stopwatch -> "Das Display geht dazu kurz an."
+                        else -> "Am Ende eine Sekunde länger. Das Display geht dazu kurz an."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -837,7 +837,7 @@ private fun EditorScreen(
                     )
                 }
                 Text(
-                    "Bei jedem Wechsel; am Ende leuchtet es grün.",
+                    if (stopwatch) "Bei jedem Signal." else "Bei jedem Wechsel; am Ende leuchtet es grün.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -867,7 +867,7 @@ private fun EditorScreen(
                     when (tone) {
                         ToneMode.OFF -> "Ohne Ton – Spotify & Co. laufen ungestört weiter."
                         ToneMode.END -> "Am Ende drei Töne aufsteigend. Tippen spielt sie vor."
-                        ToneMode.EVERY -> "Ein Ton bei jedem Wechsel, am Ende drei aufsteigend. Tippen spielt vor."
+                        ToneMode.EVERY -> if (stopwatch) "Ein Ton bei jedem Signal. Tippen spielt vor." else "Ein Ton bei jedem Wechsel, am Ende drei aufsteigend. Tippen spielt vor."
                     } + if (tone != ToneMode.OFF) " Musik läuft dabei weiter." else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

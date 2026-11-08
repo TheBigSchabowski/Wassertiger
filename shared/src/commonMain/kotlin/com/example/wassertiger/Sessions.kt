@@ -141,13 +141,14 @@ data class Session(
 
     /** "vibriert es und das Display geht kurz an. Am Ende ein Gong." – what happens at a change. */
     fun signalText(): String {
+        if (!signals) return "die Stoppuhr zählt still hoch."
         val light = if (lightOnly) "leuchtet nur das Display auf, ohne Vibration." else "vibriert es und das Display geht kurz an."
         val sound = when (tone) {
             ToneMode.OFF -> ""
             ToneMode.END -> " Am Ende ertönt ${chime.article()}."
             ToneMode.EVERY -> " Dazu ertönt ${chime.article()}."
         }
-        return "bei jedem Wechsel $light$sound"
+        return (if (stopwatch) "alle ${formatDuration(signalEvery)} " else "bei jedem Wechsel ") + light + sound
     }
 }
 

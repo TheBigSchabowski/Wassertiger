@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
                     },
                     runHint = { session ->
                         "Du kannst das Handy sperren und Musik hören –\n" + session.signalText() +
-                            "\nDie Power-Taste zeigt die Restzeit auch bei gesperrtem Handy."
+                            "\nDie Power-Taste zeigt die " + (if (session.stopwatch) "Zeit" else "Restzeit") + " auch bei gesperrtem Handy."
                     },
                     onPreviewChime = TimerService.chimes::play,
                     header = { PermissionHints() },
