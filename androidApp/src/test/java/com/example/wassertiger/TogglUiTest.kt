@@ -1,10 +1,13 @@
 package com.example.wassertiger
 
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ActivityScenario
 import kotlinx.coroutines.MainScope
 import org.junit.After
@@ -103,6 +106,23 @@ class TogglUiTest {
             // The service does not run in the test: started here as it would.
             TimerService.engine.start(ask)
             rule.onNodeWithText("● Toggl zählt mit: Tonleitern").performScrollTo().assertExists()
+        }
+    }
+
+    @Test
+    fun editorOffersThreeWays() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            rule.onNodeWithText("Beispiel").performClick()
+            rule.onNode(hasScrollAction()).performScrollToNode(hasText("Nicht erfassen"))
+            assertEquals(false, sessionStore(context).load().single { it.name == "Beispiel" }.toggl)
+            rule.onNodeWithText("Immer gleich").performClick()
+            rule.onNode(hasScrollAction()).performScrollToNode(hasText("Ganze Session als ein Block"))
+            rule.onNodeWithText("Wird automatisch erfasst als „Beispiel“.").assertExists()
+            rule.onNodeWithText("Vor dem Start fragen").performClick()
+            rule.onNodeWithText("Speichern").performClick()
+            val saved = sessionStore(context).load().single { it.name == "Beispiel" }
+            assertTrue(saved.toggl && saved.togglAsks)
+            assertTrue("one block", saved.steps.all { it.track })
         }
     }
 }
