@@ -296,8 +296,10 @@ class TogglTracker(
                 when {
                     t == null -> null
                     // Dropped after moments (started by mistake): leaves no trace. One that stays on
-                    // screen as "Gestoppt" (see keepForToggl) stays in Toggl.
-                    !run.stopped && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
+                    // screen as "Gestoppt" (see keepStopped) stays in Toggl.
+                    (!run.stopped || run.session.stopwatch) && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
+                    // Stopp is how a stopwatch ends: nothing aborted about it.
+                    run.session.stopwatch -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(ended = true)
                     else -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(aborted = true, ended = true)
                 }
             }
@@ -511,8 +513,8 @@ class SettingsStore(private val storage: SessionStorage) {
 }
 
 /**
- * For [TimerEngine.keepStopped]: a run Toggl follows stays as "Gestoppt" when stopped after a
- * minute or more, so its entry can be renamed or deleted.
+ * For [TimerEngine.keepStopped]: a stopwatch always stays to show its reading; a run Toggl follows
+ * stays as "Gestoppt" when stopped after a minute or more, so its entry can be renamed or deleted.
  */
-fun keepForToggl(settings: SettingsStore): (RunState) -> Boolean =
-    { settings.togglToken != null && it.session.toggl && it.activeMillis() >= TOGGL_MIN_MILLIS }
+fun keepStopped(settings: SettingsStore): (RunState) -> Boolean =
+    { it.session.stopwatch || settings.togglToken != null && it.session.toggl && it.activeMillis() >= TOGGL_MIN_MILLIS }

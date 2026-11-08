@@ -150,7 +150,7 @@ fun main(args: Array<String>) {
 private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = application {
     val store = remember { SessionStore(FileStorage("sessions.json")) }
     val settings = remember { SettingsStore(FileStorage("settings.json")) }
-    val engine = remember { TimerEngine(MainScope()).apply { keepStopped = keepForToggl(settings) } }
+    val engine = remember { TimerEngine(MainScope()).apply { keepStopped = keepStopped(settings) } }
     val toggl = remember { TogglTracker(settings, MainScope()) }
     val stayAwake = remember { StayAwake() }
     val music = remember { MusicPlayer(LiveStream(::LineSink)) { DrumSamples.load(::bundledResource) } }
@@ -170,7 +170,7 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
             when (event) {
                 // Started again for a parallel run: replaces the helper, the machine stays awake.
                 TimerEvent.Started -> stayAwake.start()
-                TimerEvent.Step -> {
+                TimerEvent.Step -> if (state.session.signals) {
                     chimes.signal(state.session, finish = false)
                     flash = Flash(state.id, t, s, false, state.session.flashMillis, state.session.flashColor)
                 }

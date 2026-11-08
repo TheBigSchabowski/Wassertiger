@@ -4,6 +4,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -295,4 +296,53 @@ class TimerEngineTest {
         assertNull(settings.togglToken)
         assertEquals("2026-11-06T09:30:00Z", isoInstant(1_793_957_400_000))
     }
+
+    @Test
+    fun stopwatchCountsUpAndStays() = runBlocking {
+        val engine = TimerEngine(this)
+        engine.keepStopped = { it.session.stopwatch }
+        val watch = newStopwatch()
+        assertFalse(watch.signals, "a plain stopwatch never signals")
+        val id = engine.start(watch)
+        kotlinx.coroutines.delay(1100)
+        assertTrue(engine.run(id)!!.elapsedMs() in 1000..1900)
+        engine.togglePause(id)
+        val paused = engine.run(id)!!.elapsedMs()
+        kotlinx.coroutines.delay(300)
+        assertEquals(paused, engine.run(id)!!.elapsedMs(), "stands still while paused")
+        engine.togglePause(id)
+        engine.stop(id)
+        val done = engine.run(id)!!
+        assertTrue(done.finished && done.stopped, "the reading stays on screen")
+        kotlinx.coroutines.delay(200)
+        assertEquals(done.elapsedMs(), engine.run(id)!!.elapsedMs())
+        assertEquals(formatClock(done.elapsedMs()) to "Stoppuhr", done.flashText())
+        engine.stopAll()
+    }
+
+    @Test
+    fun stopwatchSignalsAndSaves() {
+        assertEquals("0:07", formatClock(7_400))
+        assertEquals("12:34", formatClock((12 * 60 + 34) * 1000L))
+        assertEquals("1:02:03", formatClock(3_723_000))
+        val every2 = newStopwatch().copy(name = "Lesen", signalEvery = 2, steps = stopwatchSteps(2), toggl = true)
+        assertTrue(every2.signals && every2.endless)
+        assertEquals("Stoppuhr · Signal alle 2 s", every2.summary())
+        assertEquals("Stoppuhr", newStopwatch().summary())
+
+        var saved: String? = null
+        val store = SessionStore(object : SessionStorage {
+            override fun read() = saved
+            override fun write(json: String) { saved = json }
+        })
+        store.save(listOf(every2, newStopwatch()))
+        assertEquals(every2, store.load()[0])
+        assertTrue(store.load()[1].stopwatch && !store.load()[1].signals)
+
+        // Before 1.10.0 the pause button split the Toggl entry by default: now one block for everyone.
+        saved = """[{"id":"a","name":"Pomodoro","steps":[{"seconds":5}],"togglPauseStops":true}]"""
+        assertFalse(store.load().single().togglPauseStops)
+        assertFalse(Session(name = "Neu", steps = listOf(Step(30))).togglPauseStops)
+    }
 }
+

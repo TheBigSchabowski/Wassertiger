@@ -46,6 +46,10 @@ Pro Session einstellbar (Editor → „Signal beim Wechsel“):
 Das Aufleuchten zählt die Restzeit des neuen Intervalls live herunter, ebenso der Hinweis oben, wenn das
 Display schon an ist.
 
+**Stoppuhr:** „+ Neue Stoppuhr“ unter den Sessions. Sie zählt hoch bis Stopp – einfach so (*Kein Signal*) oder
+mit einem Signal *alle N Sekunden*, das wie bei den Sessions leuchtet, vibriert und/oder tönt. Nach Stopp bleibt die
+Zeit stehen. Toggl geht wie bei jeder Session (Stopp ist hier das normale Ende, nicht „abgebrochen“).
+
 **Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Jede Session wählt im
 Editor unter „Toggl“ eine von drei Möglichkeiten:
 
@@ -54,9 +58,9 @@ Editor unter „Toggl“ eine von drei Möglichkeiten:
   Projekt aus deiner Toggl-Liste und optionaler Beschreibung (z. B. nur „Musik“).
 - **Vor dem Start fragen** – „Start“ fragt erst nach Projekt und Beschreibung (z. B. beim Pomodoro).
 
-Erfasst wird die **ganze Session als ein Block** (ein Pomodoro = 2 Stunden). Wer nur einzelne Intervalle erfassen
-will, schaltet „Nur diese Intervalle erfassen“ ein und wählt sie aus. **Pause-Knopf pausiert auch Toggl** ist
-Standard; aus = Toggl zählt bei Pause einfach weiter.
+Erfasst wird die **ganze Session als ein Block** (ein Pomodoro = 2 Stunden), auch über den Pause-Knopf hinweg.
+Wer nur einzelne Intervalle erfassen will, schaltet „Nur diese Intervalle erfassen“ ein und wählt sie aus; wer
+will, dass Pause auch Toggl pausiert, schaltet „Pause-Knopf pausiert auch Toggl“ ein.
 
 Beim Laufen: *Immer gleich* → die Session zählt sofort **live** in Toggl mit. Bei *Vor dem Start fragen* ist
 vorgeschlagen, was du für diese Session zuletzt gewählt hast; „Ohne Toggl starten“ lässt den Lauf weg. Vom Widget gestartet steht die Frage unter dem Countdown – gleich ausgefüllt zählt sie

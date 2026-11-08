@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         val store = sessionStore(this)
         val settings = settingsStore(this)
-        TimerService.engine.keepStopped = keepForToggl(settings)
+        TimerService.engine.keepStopped = keepStopped(settings)
         setContent {
             val context = LocalContext.current
             val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}

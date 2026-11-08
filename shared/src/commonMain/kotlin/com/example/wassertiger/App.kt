@@ -349,8 +349,11 @@ private fun ListScreen(
             }
         }
         item {
-            OutlinedButton(onClick = { onNew(null) }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (music) "+ Neue Übung" else "+ Neue Session")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onNew(null) }, modifier = Modifier.weight(1f)) {
+                    Text(if (music) "+ Neue Übung" else "+ Neue Session")
+                }
+                if (!music) OutlinedButton(onClick = { onNew(newStopwatch()) }, modifier = Modifier.weight(1f)) { Text("+ Neue Stoppuhr") }
             }
         }
         item {
@@ -393,7 +396,7 @@ private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Co
             Column(Modifier.weight(1f)) {
                 Text(session.name, style = MaterialTheme.typography.titleLarge)
                 Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
-                Text(
+                if (!session.stopwatch) Text(
                     session.steps.joinToString("  ") { step ->
                         when {
                             step.isBlock -> "[${step.name} ${formatDuration(step.seconds)}]"
@@ -532,6 +535,11 @@ private fun EditorScreen(
         seconds >= 60 -> formatDuration(seconds)
         else -> seconds.toString()
     }
+    val stopwatch = initial.stopwatch
+    /** A stopwatch's optional signal every [signalText]. */
+    var signalOn by remember { mutableStateOf(initial.signalEvery > 0) }
+    var signalText by remember { mutableStateOf(if (initial.signalEvery > 0) durationText(initial.signalEvery) else "2") }
+    val signalEvery = if (signalOn) parseDuration(signalText) else 0
     var nextKey by remember { mutableLongStateOf(initial.steps.size.toLong()) }
     val rows = remember {
         mutableStateListOf<EditRow>().apply {
@@ -557,9 +565,13 @@ private fun EditorScreen(
         }
     }
     val rounds = if (endless) ENDLESS else roundsText.trim().toIntOrNull()?.takeIf { it in 1..999 }
-    val valid = rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null &&
-        rows.all { it.groove == null || it.parsedBpm != null }
-    fun edited() = initial.copy(
+    val valid = if (stopwatch) {
+        name.isNotBlank() && signalEvery != null
+    } else {
+        rows.isNotEmpty() && parsed.all { it != null } && name.isNotBlank() && rounds != null &&
+            rows.all { it.groove == null || it.parsedBpm != null }
+    }
+    fun edits() = initial.copy(
         name = name.trim(),
         steps = rows.mapIndexed { i, r ->
             when {
@@ -568,7 +580,7 @@ private fun EditorScreen(
                 else -> Step(parsed[i]!!, r.name.trim(), track = r.track)
             }
         },
-        rounds = rounds!!,
+        rounds = rounds ?: ENDLESS,
         sound = sound,
         fifth = fifth,
         kit = kit,
@@ -583,6 +595,7 @@ private fun EditorScreen(
         togglAskProject = togglAsk,
         togglPauseStops = togglPauseStops,
     )
+    fun edited() = if (stopwatch) edits().copy(steps = stopwatchSteps(signalEvery!!), rounds = ENDLESS, signalEvery = signalEvery) else edits()
     var templateSaved by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -599,7 +612,7 @@ private fun EditorScreen(
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 )
             }
-            itemsIndexed(rows, key = { _, r -> r.key }) { i, row ->
+            if (!stopwatch) itemsIndexed(rows, key = { _, r -> r.key }) { i, row ->
                 if (row.isBlock) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}.", Modifier.width(28.dp))
@@ -663,7 +676,7 @@ private fun EditorScreen(
                     if (music) StepSound(row)
                 }
             }
-            item {
+            if (!stopwatch) item {
                 Text("Intervall hinzufügen", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     (if (music) listOf(60, 120, 180, 300, 600, 1200) else listOf(10, 15, 20, 30, 45, 60, 90, 120)).forEach { secs ->
@@ -712,6 +725,33 @@ private fun EditorScreen(
                 }
             }
             item {
+                if (stopwatch) {
+                    Text("Signal", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilterChip(selected = !signalOn, onClick = { signalOn = false }, label = { Text("Kein Signal") })
+                        FilterChip(selected = signalOn, onClick = { signalOn = true }, label = { Text("Alle …") })
+                        if (signalOn) OutlinedTextField(
+                            value = signalText,
+                            onValueChange = { signalText = it },
+                            label = { Text(if (':' in signalText) "Min:Sek" else "Sek.") },
+                            isError = signalEvery == null,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.width(100.dp),
+                        )
+                    }
+                    Text(
+                        if (signalOn) "Zählt hoch bis Stopp und gibt alle ${signalEvery?.let(::formatDuration) ?: "…"} ein Signal – wie unten eingestellt."
+                        else "Zählt einfach hoch bis Stopp, ohne Leuchten oder Vibrieren.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+                if (!stopwatch) {
                 Text("Wiederholen", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
@@ -739,7 +779,9 @@ private fun EditorScreen(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
-                Text("Signal beim Wechsel", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                }
+                if (!stopwatch || signalOn) {
+                if (!stopwatch) Text("Signal beim Wechsel", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                 Text("Vibration", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Keep a length set some other way selectable instead of silently dropping it.
@@ -801,7 +843,8 @@ private fun EditorScreen(
                 )
                 Text("Ton", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ToneMode.entries.forEach { mode ->
+                    // A stopwatch has no end to sound at.
+                    ToneMode.entries.filter { !stopwatch || it != ToneMode.END }.forEach { mode ->
                         FilterChip(selected = tone == mode, onClick = { tone = mode }, label = { Text(mode.label) })
                     }
                 }
@@ -830,6 +873,7 @@ private fun EditorScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
+                }
                 if (togglConnected) {
                     Text("Toggl", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                     // Three ways: not at all (the default), always the same, or asked before every start.
@@ -1059,6 +1103,7 @@ private fun RunPanel(run: RunState, now: Long, engine: TimerEngine, big: Boolean
                 fontWeight = FontWeight.Bold,
                 color = Amber,
             )
+            if (run.session.stopwatch) Text(formatClock(run.elapsedMs()), style = MaterialTheme.typography.displaySmall)
             Spacer(Modifier.height(if (big) 32.dp else 8.dp))
             runExtra(run)
             Spacer(Modifier.height(16.dp))
@@ -1066,6 +1111,30 @@ private fun RunPanel(run: RunState, now: Long, engine: TimerEngine, big: Boolean
             return@Column
         }
 
+        // In a card the buttons need to move closer to fit on one line.
+        val padding = if (big) ButtonDefaults.ContentPadding else PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+        if (run.session.stopwatch) {
+            // Counts up; the signal (if any) is just a note underneath.
+            Text(
+                formatClock(run.elapsedMs(now)),
+                fontSize = if (big) 96.sp else 56.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (run.paused) MaterialTheme.colorScheme.onSurfaceVariant else Amber,
+            )
+            Text(
+                if (run.session.signalEvery > 0) "Signal alle ${formatDuration(run.session.signalEvery)} · nächstes in ${formatDuration(run.remainingSeconds(now))}"
+                else "Stoppuhr",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(if (big) 48.dp else 16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 8.dp)) {
+                OutlinedButton(onClick = { engine.stop(run.id) }, contentPadding = padding) { Text("Stopp") }
+                Button(onClick = { engine.togglePause(run.id) }, contentPadding = padding) { Text(if (run.paused) "Weiter" else "Pause") }
+            }
+            runExtra(run)
+            return@Column
+        }
         val step = run.step ?: return@Column
         Text(
             listOf("Intervall ${run.index + 1} / ${run.session.steps.size}", run.roundLabel)
@@ -1103,8 +1172,6 @@ private fun RunPanel(run: RunState, now: Long, engine: TimerEngine, big: Boolean
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(if (big) 48.dp else 16.dp))
-        // In a card the three buttons need to move closer to fit on one line.
-        val padding = if (big) ButtonDefaults.ContentPadding else PaddingValues(horizontal = 14.dp, vertical = 8.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 8.dp)) {
             OutlinedButton(onClick = { engine.stop(run.id) }, contentPadding = padding) { Text("Stopp") }
             Button(onClick = { engine.togglePause(run.id) }, contentPadding = padding) { Text(if (run.paused) "Weiter" else "Pause") }
@@ -1129,6 +1196,7 @@ private fun RunningBanner(runs: List<RunState>, onOpen: () -> Unit) {
                         "${run.session.name} · " + when {
                             run.finished -> if (run.stopped) "gestoppt" else "fertig"
                             run.paused -> "pausiert"
+                            run.session.stopwatch -> formatClock(run.elapsedMs(now))
                             else -> formatDuration(run.remainingSeconds(now))
                         },
                         style = MaterialTheme.typography.titleMedium,

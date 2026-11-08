@@ -76,7 +76,7 @@ class TogglTest {
     }).apply { togglToken = "token" }
 
     /** Fixed name, every interval counts. */
-    private val pomodoro = Session(name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4, toggl = true)
+    private val pomodoro = Session(name = "Pomodoro", steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")), rounds = 4, toggl = true, togglPauseStops = true)
 
     /** Preset [n] with Toggl ticked (off by default). */
     private fun preset(n: Int) = presets()[n].copy(toggl = true)
@@ -424,4 +424,29 @@ class TogglTest {
         toggl.idle()
         assertEquals("Lesen", server.running!!.description)
     }
+
+    @Test
+    fun stopwatchStopIsItsEnd() = runBlocking {
+        val toggl = tracker(this)
+        val watch = newStopwatch().copy(toggl = true, togglDescription = "Lesen")
+        val r = run(25, minutesAgo = 12, session = watch)
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.onEvent(TimerEvent.Stopped, r.copy(finished = true, stopped = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        val t = toggl.runs.value.getValue(25)
+        assertTrue(t.synced && t.ended && !t.aborted)
+        val e = server.entries.values.single()
+        assertEquals("Lesen", e.description)
+        assertTrue(e.tags.isEmpty(), "not aborted")
+        assertTrue(e.stop != null)
+
+        // Stopped after moments: started by mistake, left out.
+        val quick = run(26, minutesAgo = 0, session = watch)
+        toggl.onEvent(TimerEvent.Started, quick)
+        toggl.onEvent(TimerEvent.Stopped, quick.copy(finished = true, stopped = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(26).deleted)
+        assertEquals(1, server.entries.size)
+    }
 }
+
