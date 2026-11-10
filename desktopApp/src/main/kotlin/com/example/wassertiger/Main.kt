@@ -4,6 +4,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.painter.BitmapPainter
@@ -16,6 +17,8 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import com.sun.net.httpserver.HttpServer
 import java.io.File
 import java.io.IOException
@@ -82,6 +85,9 @@ private class StayAwake {
         process = null
     }
 }
+
+/** How long closing the window waits for Toggl. */
+private const val CLOSE_WAIT_MS = 5000L
 
 private data class Flash(val runId: Long, val title: String, val text: String, val finished: Boolean, val millis: Long, val color: Int)
 
@@ -155,7 +161,10 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
     val store = remember { SessionStore(FileStorage("sessions.json")) }
     val settings = remember { SettingsStore(FileStorage("settings.json")) }
     val engine = remember { TimerEngine(MainScope()).apply { keepStopped = keepStopped(settings) } }
-    val toggl = remember { TogglTracker(settings, MainScope()) }
+    val toggl = remember { TogglTracker(settings, MainScope()).apply { startHeartbeat() } }
+    val scope = rememberCoroutineScope()
+    /** The window is gone already; what runs is being stopped in Toggl before the app quits. */
+    var closing by remember { mutableStateOf(false) }
     val stayAwake = remember { StayAwake() }
     val music = remember { MusicPlayer(LiveStream(::LineSink)) { DrumSamples.load(::bundledResource) } }
     val chimes = remember { ChimePlayer(::LineSink) }
@@ -193,10 +202,19 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
 
     Window(
         onCloseRequest = {
-            music.stop()
-            stayAwake.stop()
-            exitApplication()
+            closing = true
+            flash = null
+            // Ends every run, so its entry in Toggl stops here instead of running on. Should Toggl
+            // not answer in time, the next start makes up for it (see TogglTracker.recover).
+            scope.launch {
+                engine.stopAll()
+                music.stop()
+                stayAwake.stop()
+                withTimeoutOrNull(CLOSE_WAIT_MS) { toggl.idle() }
+                exitApplication()
+            }
         },
+        visible = !closing,
         title = "Wassertiger",
         icon = icon,
         state = rememberWindowState(size = DpSize(560.dp, 820.dp)),

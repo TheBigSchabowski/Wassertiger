@@ -78,6 +78,11 @@ Sessions von vor 1.9.0 behalten Toggl nur, wenn sie ein eigenes Projekt oder ein
   bleibt er unangetastet, und die Session wird eingetragen, sobald sie pausiert oder endet.
 - Ohne Netz oder am Stundenlimit des kostenlosen Toggl-Plans holt die App das Eintragen von selbst nach
   (oder sofort mit „Nochmal“).
+- Was Toggl noch fehlt, merkt sich die App: Wird sie mitten in einer Session beendet (Absturz, Update), stoppt
+  der nächste Start den Eintrag dort, wo sie zuletzt lief (auf die Minute genau, als *abgebrochen*), und trägt
+  nach, was noch nicht eingetragen war. Am Desktop beendet das Schließen des Fensters laufende Sessions und
+  ihre Toggl-Einträge sofort.
+- „Zurück“ auf dem Fertig-Bildschirm fragt nach, solange die Session noch nicht in Toggl eingetragen ist.
 
 **Restzeit bei gesperrtem Handy (Android):** Während eine Session läuft, zeigt die Power-Taste statt des
 Sperrbildschirms den großen Countdown mit Pause, Überspringen und Stopp. „Entsperren“ (oder Fingerabdruck)

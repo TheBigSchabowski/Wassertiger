@@ -1,5 +1,6 @@
 package com.example.wassertiger
 
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -237,6 +238,72 @@ class TogglTest {
         assertEquals("Song schreiben", e.description)
         assertEquals(3L, e.project)
         assertTrue(toggl.runs.value.getValue(14).synced)
+    }
+
+    /** What a Wassertiger that died left in the settings, as last heard of [minutesAgo]. */
+    private fun leftBehind(minutesAgo: Int): Long {
+        val (who, kept) = settings.togglPending().entries.single()
+        val alive = wallClockMillis() - minutesAgo * 60_000L
+        settings.setTogglPending(who, alive, kept.second)
+        return alive
+    }
+
+    @Test
+    fun nextStartStopsTheTimerADeadAppLeftRunning() = runBlocking {
+        val dead = tracker(this)
+        dead.onEvent(TimerEvent.Started, run(1, minutesAgo = 30))
+        dead.idle()
+        assertTrue(server.running != null, "counts live, and then the app dies")
+        val alive = leftBehind(minutesAgo = 10)
+
+        val toggl = tracker(this)
+        toggl.idle()
+        assertNull(server.running, "stopped instead of running on for good")
+        val e = server.entries.values.single()
+        assertEquals(isoInstant(alive), e.stop, "ends where the app was last known alive")
+        assertEquals(listOf(TOGGL_ABORTED_TAG), e.tags)
+        assertTrue(settings.togglPending().isEmpty(), "nothing owed any more")
+        assertTrue(toggl.runs.value.keys.all { it < 0 }, "clear of the engine's run ids")
+    }
+
+    @Test
+    fun nextStartBooksWhatADeadAppHadNotGotTo() = runBlocking {
+        val gone = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Job())
+        val dead = tracker(gone)
+        server.offline = true
+        val r = run(1, minutesAgo = 40, session = preset(1))
+        dead.onEvent(TimerEvent.Started, r)
+        dead.onEvent(TimerEvent.Finished, r.copy(finished = true, endedAt = wallClockMillis() - 15 * 60_000))
+        dead.idle()
+        gone.cancel()
+        assertTrue(server.entries.isEmpty())
+        leftBehind(minutesAgo = 10)
+        server.offline = false
+
+        var told: TogglRun? = null
+        val toggl = tracker(this).also { it.onReport = { t -> told = t } }
+        toggl.idle()
+        val e = server.entries.values.single()
+        assertEquals("Pomodoro", e.description, "nobody left to ask: under the suggested name")
+        assertTrue(e.stop != null && e.tags.isEmpty(), "it had finished: not aborted")
+        assertTrue(told != null && settings.togglPending().isEmpty())
+    }
+
+    @Test
+    fun anotherRunningAppKeepsItsRuns() = runBlocking {
+        val other = tracker(this)
+        other.onEvent(TimerEvent.Started, run(1, minutesAgo = 30))
+        other.idle()
+
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Job())
+        val toggl = tracker(scope)
+        toggl.idle()
+        scope.cancel()
+        assertTrue(server.running != null && toggl.runs.value.isEmpty(), "heard of just now: left alone")
+
+        other.onEvent(TimerEvent.Finished, run(1, minutesAgo = 30).copy(finished = true, endedAt = wallClockMillis()))
+        other.idle()
+        assertTrue(settings.togglPending().isEmpty(), "settled: nothing kept")
     }
 
     @Test
