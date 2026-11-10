@@ -22,8 +22,10 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlin.random.Random
 
 /** Status code and body of an HTTP response. */
 class HttpResult(val code: Int, val body: String)
@@ -47,6 +49,12 @@ const val TOGGL_ABORTED_TAG = "abgebrochen"
 
 /** A run stopped before this much running time is dropped, in Toggl too: started by mistake. */
 const val TOGGL_MIN_MILLIS = 60_000L
+
+/** How often a Wassertiger with runs still owed to Toggl says it is alive (see [TogglTracker.startHeartbeat]). */
+const val TOGGL_HEARTBEAT_MILLIS = 60_000L
+
+/** Another Wassertiger silent for this long is gone: what it still owed Toggl is taken over. */
+const val TOGGL_STALE_MILLIS = 3 * TOGGL_HEARTBEAT_MILLIS
 
 typealias Http = suspend (method: String, url: String, user: String, password: String, body: String?) -> HttpResult
 
@@ -194,6 +202,8 @@ data class TogglRun(
     val ended: Boolean = false,
     /** [TogglTracker.onReport] has told about it. */
     val reported: Boolean = false,
+    /** Stopp is its normal end: never tagged [TOGGL_ABORTED_TAG]. */
+    val stopwatch: Boolean = false,
 ) {
     /** Counting in Toggl right now. */
     val live: Boolean get() = segments.any { it.running && it.end == null }
@@ -202,6 +212,9 @@ data class TogglRun(
     val synced: Boolean get() = !waiting && segments.all { s ->
         if (s.end == null) true else s.entryId != null && !s.running && (!aborted || s.tagged)
     }
+
+    /** Nothing left to do for it in Toggl: over, and booked there or taken out for good. */
+    val settled: Boolean get() = ended && if (deleted) segments.none { it.entryId != null } else synced
 
     fun millis(now: Long = wallClockMillis()): Long = segments.sumOf { (it.end ?: now) - it.start }
     val firstStart: Long get() = segments.firstOrNull()?.start ?: 0
@@ -218,6 +231,10 @@ data class TogglRun(
  * otherwise its stretches are booked as they end.
  *
  * Fed by the platform with every [TimerEvent]; network trouble leaves the run unsynced, see [retry].
+ *
+ * What is still owed to Toggl is kept in [settings] at every change, so it outlives the app: the next
+ * start stops the entries a Wassertiger that died left running and books what it had not got to
+ * (see [recover]).
  */
 class TogglTracker(
     private val settings: SettingsStore,
@@ -241,6 +258,77 @@ class TogglTracker(
      * its description or project ([TogglRun.waiting]). Android posts a notification.
      */
     var onReport: (TogglRun) -> Unit = {}
+
+    /** Names what this process keeps in [settings], apart from another Wassertiger's (two desktop windows). */
+    private val owner = Random.nextLong().toULong().toString(16)
+    private var hasPending = false
+    /** Runs taken over from a Wassertiger that died get ids below zero, clear of the engine's. */
+    private var nextAdopted = -1L
+
+    init {
+        recover()
+    }
+
+    /**
+     * Keeps saying this Wassertiger is alive while it owes Toggl something, so that no other takes
+     * its runs over, and so that a run cut short is known to have gone on until about then.
+     */
+    fun startHeartbeat(everyMs: Long = TOGGL_HEARTBEAT_MILLIS) {
+        scope.launch {
+            while (true) {
+                delay(everyMs)
+                if (hasPending) persist()
+            }
+        }
+    }
+
+    /**
+     * Takes over what a Wassertiger that is gone still owed Toggl: a run cut short ends where it
+     * was last known alive (its entry in Toggl stops there instead of running on for good), and
+     * what was not booked yet is booked. One heard of lately may still be running; it is looked at again later.
+     */
+    private fun recover() {
+        val now = wallClockMillis()
+        var again: Long? = null
+        settings.togglPending().forEach { (who, kept) ->
+            val (alive, list) = kept
+            if (who == owner) return@forEach
+            val age = now - alive
+            if (age < TOGGL_STALE_MILLIS) {
+                again = minOf(again ?: Long.MAX_VALUE, TOGGL_STALE_MILLIS - age.coerceAtLeast(0))
+                return@forEach
+            }
+            settings.dropTogglPending(who)
+            list.forEach { adopt(it, alive) }
+        }
+        again?.let { wait ->
+            scope.launch {
+                delay(wait + 1000)
+                recover()
+            }
+        }
+    }
+
+    private fun adopt(kept: TogglRun, alive: Long) {
+        val id = nextAdopted--
+        val closed = kept.close(alive)
+        val run = when {
+            kept.ended -> kept
+            // As with Stopp: moments only leave no trace, anything longer was cut short.
+            closed.millis() < TOGGL_MIN_MILLIS -> closed.copy(deleted = true, ended = true)
+            else -> closed.copy(ended = true, aborted = !kept.stopwatch)
+        }
+        // Nobody is left to ask for its name: it goes in as suggested, to be changed in Toggl.
+        change(id) { run.copy(runId = id, waiting = false, error = null) }
+        sync(id)
+    }
+
+    private fun persist() {
+        val pending = runs.value.values.filter { !it.settled }
+        if (pending.isEmpty() && !hasPending) return
+        hasPending = pending.isNotEmpty()
+        settings.setTogglPending(owner, wallClockMillis(), pending)
+    }
 
     /**
      * What the next run of [session] goes to Toggl under, picked just before its start (see
@@ -273,6 +361,7 @@ class TogglTracker(
                 change(id) {
                     TogglRun(
                         id, s.name, description, project, first,
+                        stopwatch = s.stopwatch,
                         waiting = s.togglAsks && choice?.first == null,
                         // "Ohne Toggl starten": shows "Doch erfassen" while it runs.
                         deleted = choice != null && choice.first == null,
@@ -360,7 +449,7 @@ class TogglTracker(
         settings.rememberEntry(run.session.name, description, project)
         val end = if (run.endedAt > 0) run.endedAt else wallClockMillis()
         change(run.id) {
-            TogglRun(run.id, run.session.name, description, project, listOf(TogglSegment(end - run.activeMillis(), end)), aborted = run.stopped)
+            TogglRun(run.id, run.session.name, description, project, listOf(TogglSegment(end - run.activeMillis(), end)), aborted = run.stopped, ended = true, reported = true)
         }
         sync(run.id)
     }
@@ -396,6 +485,7 @@ class TogglTracker(
     private fun change(id: Long, transform: (TogglRun?) -> TogglRun?) {
         val next = transform(runs.value[id])
         _runs.value = if (next == null) runs.value - id else runs.value + (id to next)
+        persist()
     }
 
     private fun launch(block: suspend () -> Unit) {
@@ -502,6 +592,27 @@ class SettingsStore(private val storage: SessionStorage) {
         return description to o["project"]?.let(::readProject)
     }
 
+    /** What each Wassertiger still owes Toggl, by its [TogglTracker]'s name: when it last said so, and the runs. */
+    fun togglPending(): Map<String, Pair<Long, List<TogglRun>>> =
+        (read()["togglPending"] as? JsonObject).orEmpty().mapNotNull { (owner, element) ->
+            runCatching {
+                val o = element.jsonObject
+                owner to (o.getValue("alive").jsonPrimitive.long to o.getValue("runs").jsonArray.map(::readTogglRun))
+            }.getOrNull()
+        }.toMap()
+
+    /** An empty [runs] takes [owner] out again. */
+    fun setTogglPending(owner: String, alive: Long, runs: List<TogglRun>) = write {
+        val all = (this["togglPending"] as? JsonObject).orEmpty().toMutableMap()
+        if (runs.isEmpty()) all.remove(owner) else all[owner] = buildJsonObject {
+            put("alive", alive)
+            put("runs", buildJsonArray { runs.forEach { add(writeTogglRun(it)) } })
+        }
+        if (all.isEmpty()) remove("togglPending") else put("togglPending", JsonObject(all))
+    }
+
+    fun dropTogglPending(owner: String) = setTogglPending(owner, 0, emptyList())
+
     fun rememberEntry(sessionName: String, description: String, project: TogglProject?) = write {
         val last = (this["togglLast"] as? JsonObject).orEmpty().toMutableMap()
         last[sessionName] = buildJsonObject {
@@ -510,6 +621,58 @@ class SettingsStore(private val storage: SessionStorage) {
         }
         put("togglLast", JsonObject(last))
     }
+}
+
+private fun writeTogglRun(t: TogglRun): JsonObject = buildJsonObject {
+    put("session", t.sessionName)
+    put("description", t.description)
+    t.project?.let { put("project", writeProject(it)) }
+    put("segments", buildJsonArray {
+        t.segments.forEach { s ->
+            add(buildJsonObject {
+                put("start", s.start)
+                s.end?.let { put("end", it) }
+                s.entryId?.let { put("entry", it) }
+                put("running", s.running)
+                put("tagged", s.tagged)
+            })
+        }
+    })
+    put("aborted", t.aborted)
+    put("deleted", t.deleted)
+    t.workspace?.let { put("workspace", it) }
+    put("waiting", t.waiting)
+    put("ended", t.ended)
+    put("reported", t.reported)
+    put("stopwatch", t.stopwatch)
+}
+
+private fun readTogglRun(element: JsonElement): TogglRun {
+    val o = element.jsonObject
+    fun flag(name: String) = o[name]?.jsonPrimitive?.booleanOrNull ?: false
+    return TogglRun(
+        runId = 0,
+        sessionName = o["session"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        description = o["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        project = o["project"]?.let(::readProject),
+        segments = o.getValue("segments").jsonArray.map {
+            val s = it.jsonObject
+            TogglSegment(
+                start = s.getValue("start").jsonPrimitive.long,
+                end = s["end"]?.jsonPrimitive?.longOrNull,
+                entryId = s["entry"]?.jsonPrimitive?.longOrNull,
+                running = s["running"]?.jsonPrimitive?.booleanOrNull ?: false,
+                tagged = s["tagged"]?.jsonPrimitive?.booleanOrNull ?: false,
+            )
+        },
+        aborted = flag("aborted"),
+        deleted = flag("deleted"),
+        workspace = o["workspace"]?.jsonPrimitive?.longOrNull,
+        waiting = flag("waiting"),
+        ended = flag("ended"),
+        reported = flag("reported"),
+        stopwatch = flag("stopwatch"),
+    )
 }
 
 /**

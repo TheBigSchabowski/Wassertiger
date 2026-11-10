@@ -153,6 +153,19 @@ fun WassertigerApp(
             onStart(session)
         }
     }
+    /** A finished run about to be closed although Toggl still waits for its name. */
+    var leaving by remember { mutableStateOf<RunState?>(null) }
+    leaving?.let { run ->
+        Confirm(
+            "Ohne Toggl-Eintrag schließen?",
+            "„${run.session.name}“ ist noch nicht in Toggl eingetragen. Die Zeit wird dann nicht erfasst.",
+            "Schließen",
+            onConfirm = {
+                toggl.setTracked(run.id, false)
+                engine.dismiss(run.id)
+            },
+        ) { leaving = null }
+    }
     // Key events need a focused node; the lists have no text fields, so the whole page takes focus.
     LaunchedEffect(onList) { if (onList) runCatching { focus.requestFocus() } }
 
@@ -212,6 +225,11 @@ fun WassertigerApp(
                     engine = engine,
                     hint = runs.first().session.let { if (it.music) MUSIC_HINT else runHint(it) },
                     onAddParallel = { picking = true },
+                    onDismiss = { run ->
+                        val t = toggl.runs.value[run.id]
+                        if (togglToken != null && t != null && t.waiting && !t.deleted && t.segments.isNotEmpty()) leaving = run
+                        else engine.dismiss(run.id)
+                    },
                     runExtra = { run -> togglToken?.let { TogglPanel(run, it, toggl, settings) } },
                 )
                 else -> Column {
@@ -1070,6 +1088,7 @@ private const val MUSIC_HINT = "Bei jedem Wechsel blendet der Ton weich über un
  * The running sessions: one fills the screen with its big countdown; several stack up, each with
  * its own controls. [onAddParallel] (if given) offers to start one more beside them; a finished run
  * [runExtra] goes below each run's controls (above "Zurück" once it is over). [extra] goes below everything.
+ * [onDismiss] is "Zurück" on a finished run.
  */
 @Composable
 fun RunScreen(
@@ -1077,6 +1096,7 @@ fun RunScreen(
     engine: TimerEngine,
     hint: String,
     onAddParallel: (() -> Unit)? = null,
+    onDismiss: (RunState) -> Unit = { engine.dismiss(it.id) },
     runExtra: @Composable (RunState) -> Unit = {},
     extra: @Composable () -> Unit = {},
 ) {
@@ -1090,7 +1110,7 @@ fun RunScreen(
             verticalArrangement = Arrangement.spacedBy(if (single) 0.dp else 16.dp, Alignment.CenterVertically),
         ) {
             if (single) {
-                RunPanel(runs.single(), now, engine, big = true, runExtra)
+                RunPanel(runs.single(), now, engine, big = true, onDismiss, runExtra)
             } else {
                 runs.forEach { run ->
                     // Not surfaceVariant: the outlined buttons' border has that very colour.
@@ -1099,7 +1119,7 @@ fun RunScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     ) {
                         Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                            RunPanel(run, now, engine, big = false, runExtra)
+                            RunPanel(run, now, engine, big = false, onDismiss, runExtra)
                         }
                     }
                 }
@@ -1121,7 +1141,14 @@ fun RunScreen(
 
 /** Countdown and controls of one run; [big] when it has the screen to itself. */
 @Composable
-private fun RunPanel(run: RunState, now: Long, engine: TimerEngine, big: Boolean, runExtra: @Composable (RunState) -> Unit) {
+private fun RunPanel(
+    run: RunState,
+    now: Long,
+    engine: TimerEngine,
+    big: Boolean,
+    onDismiss: (RunState) -> Unit,
+    runExtra: @Composable (RunState) -> Unit,
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(run.session.name, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
         Spacer(Modifier.height(if (big) 32.dp else 8.dp))
@@ -1137,7 +1164,7 @@ private fun RunPanel(run: RunState, now: Long, engine: TimerEngine, big: Boolean
             Spacer(Modifier.height(if (big) 32.dp else 8.dp))
             runExtra(run)
             Spacer(Modifier.height(16.dp))
-            Button(onClick = { engine.dismiss(run.id) }) { Text("Zurück") }
+            Button(onClick = { onDismiss(run) }) { Text("Zurück") }
             return@Column
         }
 

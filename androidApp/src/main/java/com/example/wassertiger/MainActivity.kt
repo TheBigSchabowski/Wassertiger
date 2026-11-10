@@ -73,6 +73,7 @@ internal var tracker: TogglTracker? = null
 fun togglTracker(context: Context): TogglTracker = tracker ?: TogglTracker(settingsStore(context), MainScope()).also {
     val app = context.applicationContext
     it.onReport = { run -> notifyToggl(app, run) }
+    it.startHeartbeat()
     tracker = it
 }
 

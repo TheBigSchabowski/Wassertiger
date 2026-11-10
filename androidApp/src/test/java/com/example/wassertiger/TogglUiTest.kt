@@ -110,6 +110,24 @@ class TogglUiTest {
     }
 
     @Test
+    fun closingAnUnnamedRunAsksFirst() {
+        val ask = Session(name = "Üben", steps = listOf(Step(10 * 60)), toggl = true, togglAskDescription = true, togglAskProject = true)
+        val id = TimerService.engine.start(ask)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            TimerService.engine.keepStopped = { true }
+            TimerService.engine.stop(id)
+            rule.waitForIdle()
+            rule.onNodeWithText("Zurück").performScrollTo().performClick()
+            rule.onNodeWithText("Ohne Toggl-Eintrag schließen?").assertExists()
+            rule.onNodeWithText("Schließen").performClick()
+            rule.onNodeWithText("Gestoppt").assertDoesNotExist()
+            assertTrue(togglTracker(context).runs.value.getValue(id).deleted)
+            assertTrue(calls.toString(), calls.none { it.startsWith("POST") })
+            assertTrue("nothing owed to Toggl", settingsStore(context).togglPending().isEmpty())
+        }
+    }
+
+    @Test
     fun editorOffersThreeWays() {
         ActivityScenario.launch(MainActivity::class.java).use {
             rule.onNodeWithText("Beispiel").performClick()
