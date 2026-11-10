@@ -314,46 +314,59 @@ fun parseDuration(text: String): Int? {
 interface SessionStorage {
     fun read(): String?
     fun write(json: String)
+
+    /** Puts aside what [read] returned when it could not be read in full, before it is written over. */
+    fun keepBroken(raw: String) {}
 }
 
 class SessionStore(private val storage: SessionStorage) {
 
+    /**
+     * The stored sessions. One that cannot be read is left out rather than taking the app down with
+     * it, and a list that cannot be read at all comes back empty; either way what was stored is put
+     * aside first (see [SessionStorage.keepBroken]), since the next save writes over it.
+     */
     fun load(): List<Session> {
         val raw = storage.read() ?: return listOf(EXAMPLE).also(::save)
-        return Json.parseToJsonElement(raw).jsonArray.map { element ->
-            val o = element.jsonObject
-            Session(
-                id = o.getValue("id").jsonPrimitive.content,
-                name = o.getValue("name").jsonPrimitive.content,
-                steps = o.getValue("steps").jsonArray.map(::readStep),
-                // Sessions saved before rounds existed play once.
-                rounds = o["rounds"]?.jsonPrimitive?.int ?: 1,
-                template = o["template"]?.jsonPrimitive?.boolean ?: false,
-                music = o["music"]?.jsonPrimitive?.boolean ?: false,
-                sound = o["sound"]?.jsonPrimitive?.content.let { n -> DroneSound.entries.firstOrNull { it.name == n } } ?: DroneSound.ORGAN,
-                fifth = o["fifth"]?.jsonPrimitive?.boolean ?: true,
-                kit = o["kit"]?.jsonPrimitive?.content.let { n -> DrumKit.entries.firstOrNull { it.name == n } } ?: DrumKit.ACOUSTIC,
-                vibration = o["vibration"]?.jsonPrimitive?.int ?: 1,
-                // Sessions saved before 1.6.0 stay silent.
-                tone = o["tone"]?.jsonPrimitive?.content.let { n -> ToneMode.entries.firstOrNull { it.name == n } } ?: ToneMode.OFF,
-                chime = o["chime"]?.jsonPrimitive?.content.let { n -> Chime.entries.firstOrNull { it.name == n } } ?: Chime.BEEP,
-                flashColor = o["flashColor"]?.jsonPrimitive?.content?.let(::parseHexColor) ?: AMBER_RGB,
-                // Before 1.9.0 every session counted in Toggl ("toggl" was always true): only those
-                // given a project or description of their own keep counting.
-                toggl = o["togglOn"]?.jsonPrimitive?.boolean ?: (
-                    o["toggl"]?.jsonPrimitive?.boolean == true &&
-                        (o["togglProject"] != null || !o["togglDescription"]?.jsonPrimitive?.contentOrNull.isNullOrBlank())
-                    ),
-                togglDescription = o["togglDescription"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
-                togglProject = o["togglProject"]?.let { readProject(it) },
-                togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
-                // "togglPauseStops" (before 1.10.0) was true for nearly everyone as the old default: not carried over.
-                togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
-                stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
-                signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
-            )
-        }
+        val elements = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull()
+        val sessions = elements.orEmpty().mapNotNull { runCatching { readSession(it) }.getOrNull() }
+        if (elements == null || sessions.size < elements.size) storage.keepBroken(raw)
+        return sessions
+    }
+
+    private fun readSession(element: JsonElement): Session {
+        val o = element.jsonObject
+        return Session(
+            id = o.getValue("id").jsonPrimitive.content,
+            name = o.getValue("name").jsonPrimitive.content,
+            steps = o.getValue("steps").jsonArray.map(::readStep),
+            // Sessions saved before rounds existed play once.
+            rounds = o["rounds"]?.jsonPrimitive?.int ?: 1,
+            template = o["template"]?.jsonPrimitive?.boolean ?: false,
+            music = o["music"]?.jsonPrimitive?.boolean ?: false,
+            sound = o["sound"]?.jsonPrimitive?.content.let { n -> DroneSound.entries.firstOrNull { it.name == n } } ?: DroneSound.ORGAN,
+            fifth = o["fifth"]?.jsonPrimitive?.boolean ?: true,
+            kit = o["kit"]?.jsonPrimitive?.content.let { n -> DrumKit.entries.firstOrNull { it.name == n } } ?: DrumKit.ACOUSTIC,
+            vibration = o["vibration"]?.jsonPrimitive?.int ?: 1,
+            // Sessions saved before 1.6.0 stay silent.
+            tone = o["tone"]?.jsonPrimitive?.content.let { n -> ToneMode.entries.firstOrNull { it.name == n } } ?: ToneMode.OFF,
+            chime = o["chime"]?.jsonPrimitive?.content.let { n -> Chime.entries.firstOrNull { it.name == n } } ?: Chime.BEEP,
+            flashColor = o["flashColor"]?.jsonPrimitive?.content?.let(::parseHexColor) ?: AMBER_RGB,
+            // Before 1.9.0 every session counted in Toggl ("toggl" was always true): only those
+            // given a project or description of their own keep counting.
+            toggl = o["togglOn"]?.jsonPrimitive?.boolean ?: (
+                o["toggl"]?.jsonPrimitive?.boolean == true &&
+                    (o["togglProject"] != null || !o["togglDescription"]?.jsonPrimitive?.contentOrNull.isNullOrBlank())
+                ),
+            togglDescription = o["togglDescription"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
+            togglProject = o["togglProject"]?.let { readProject(it) },
+            togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
+            // "togglPauseStops" (before 1.10.0) was true for nearly everyone as the old default: not carried over.
+            togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
+            stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
+            signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
+        ).also { require(it.steps.isNotEmpty() && it.steps.all { s -> s.seconds > 0 }) }
     }
 
     fun save(sessions: List<Session>) {

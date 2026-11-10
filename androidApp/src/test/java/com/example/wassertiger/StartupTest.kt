@@ -5,7 +5,10 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
@@ -54,6 +57,29 @@ class StartupTest {
         rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
             .performScrollToNode(hasText("Meine Vorlagen"))
         rule.onNodeWithText("Neu daraus").assertExists()
+    }
+
+    @Test
+    fun deletingAndDiscardingAskFirst() {
+        rule.onNodeWithText("Beispiel").performClick()
+        rule.onNodeWithText("Abbrechen").performClick()
+        rule.onNodeWithText("Start").assertExists() // nothing changed: straight back to the list
+
+        rule.onNodeWithText("Beispiel").performClick()
+        rule.onNodeWithText("Name der Session").performTextReplacement("Anders")
+        rule.onNodeWithText("Abbrechen").performClick()
+        rule.onNodeWithText("Änderungen verwerfen?").assertExists()
+        rule.onNodeWithText("Verwerfen").performClick()
+        rule.onNodeWithText("Beispiel").assertExists()
+
+        rule.onNodeWithText("Beispiel").performClick()
+        rule.onNodeWithText("Löschen").performClick()
+        rule.onNodeWithText("„Beispiel“ löschen?").assertExists()
+        rule.onNodeWithText("Zurück").performClick()
+        rule.onNodeWithText("Löschen").performClick()
+        rule.onAllNodesWithText("Löschen").onLast().performClick()
+        rule.onNodeWithText("Beispiel").assertDoesNotExist()
+        rule.onNodeWithText("+ Neue Session").assertExists()
     }
 
     @Test

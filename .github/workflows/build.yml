@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       # The APK is only compiled here as a check: a CI runner signs with a throwaway debug key,
       # which would block updating an installed copy. Ship the APK from a local build instead.
-      - run: ./gradlew :shared:desktopTest :androidApp:assembleDebug :desktopApp:packageDeb :desktopApp:createDistributable
+      - run: ./gradlew :shared:desktopTest :androidApp:testDebugUnitTest :androidApp:assembleDebug :desktopApp:packageDeb :desktopApp:createDistributable
       - run: tar -czf Wassertiger-linux-x86_64.tar.gz -C desktopApp/build/compose/binaries/main/app Wassertiger
       - uses: actions/upload-artifact@v4
         with:

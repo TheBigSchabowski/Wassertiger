@@ -49,6 +49,8 @@ fun sessionStore(context: Context): SessionStore {
             // The home-screen widgets list the sessions, so they follow every edit.
             Widgets.update(app)
         }
+
+        override fun keepBroken(raw: String) = prefs.edit().putString("sessions_broken", raw).apply()
     })
 }
 

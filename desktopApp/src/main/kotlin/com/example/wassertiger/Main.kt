@@ -50,6 +50,10 @@ private class FileStorage(private val name: String) : SessionStorage {
         tmp.writeText(json)
         tmp.renameTo(file)
     }
+
+    override fun keepBroken(raw: String) {
+        runCatching { File(dataFile(name).parentFile, "$name.broken").writeText(raw) }
+    }
 }
 
 /**
