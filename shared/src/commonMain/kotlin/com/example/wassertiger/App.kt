@@ -509,7 +509,6 @@ private fun EditorScreen(
     onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    PlatformBackHandler(onBack = onCancel)
     var name by remember { mutableStateOf(initial.name) }
     var endless by remember { mutableStateOf(initial.endless) }
     var roundsText by remember { mutableStateOf(if (initial.endless) "1" else initial.rounds.toString()) }
@@ -597,6 +596,20 @@ private fun EditorScreen(
     )
     fun edited() = if (stopwatch) edits().copy(steps = stopwatchSteps(signalEvery!!), rounds = ENDLESS, signalEvery = signalEvery) else edits()
     var templateSaved by remember { mutableStateOf(false) }
+    /** A question before something is lost for good: deleting, or leaving with changes. */
+    var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    // Anything that cannot be saved as it stands was typed in, so it counts as a change too.
+    val cancel = { if (!valid || edited() != initial) confirmDiscard = true else onCancel() }
+    PlatformBackHandler(onBack = cancel)
+    if (confirmDelete) Confirm(
+        "„${initial.name}“ löschen?",
+        if (initial.template) "Die Vorlage ist dann weg." else "Die Session ist dann weg.",
+        "Löschen", onDelete,
+    ) { confirmDelete = false }
+    if (confirmDiscard) Confirm("Änderungen verwerfen?", "Was du geändert hast, wird nicht gespeichert.", "Verwerfen", onCancel) {
+        confirmDiscard = false
+    }
 
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
@@ -978,13 +991,30 @@ private fun EditorScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (!isNew) {
-                TextButton(onClick = onDelete) { Text("Löschen", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { confirmDelete = true }) { Text("Löschen", color = MaterialTheme.colorScheme.error) }
             }
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = onCancel) { Text("Abbrechen") }
+            OutlinedButton(onClick = cancel) { Text("Abbrechen") }
             Button(enabled = valid, onClick = { onSave(edited()) }) { Text("Speichern") }
         }
     }
+}
+
+/** Asks before [onConfirm] does what cannot be undone; [action] names it on the button. */
+@Composable
+private fun Confirm(title: String, text: String, action: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = {
+            TextButton(onClick = {
+                onDismiss()
+                onConfirm()
+            }) { Text(action, color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Zurück") } },
+    )
 }
 
 /** Drone, drums and tempo of one music interval. */

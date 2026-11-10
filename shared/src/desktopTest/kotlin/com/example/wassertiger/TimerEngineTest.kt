@@ -60,6 +60,32 @@ class TimerEngineTest {
     }
 
     @Test
+    fun brokenStoreDoesNotCrash() {
+        var saved: String? = null
+        var kept: String? = null
+        val store = SessionStore(object : SessionStorage {
+            override fun read() = saved
+            override fun write(json: String) { saved = json }
+            override fun keepBroken(raw: String) { kept = raw }
+        })
+        store.save(listOf(twoSteps, twoSteps.copy(id = "b", name = "Zwei")))
+        assertEquals(2, store.load().size)
+        assertNull(kept, "a list that reads fine is not put aside")
+
+        // One session without its steps: the other one still loads.
+        val oneBroken = saved!!.replaceFirst("\"steps\":", "\"stepz\":")
+        saved = oneBroken
+        assertEquals(listOf("Zwei"), store.load().map { it.name })
+        assertEquals(oneBroken, kept)
+
+        saved = "{ not json"
+        assertEquals(emptyList(), store.load())
+        assertEquals("{ not json", kept)
+        saved = "{}"
+        assertEquals(emptyList(), store.load(), "not a list at all")
+    }
+
+    @Test
     fun presetsAndSummaries() {
         val (breathing, pomodoro, every5) = presets()
         assertEquals(5 * 60, breathing.totalSeconds)
