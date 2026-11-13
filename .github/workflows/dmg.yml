@@ -2,7 +2,7 @@ name: macOS-DMG
 
 # Builds the DMG on a GitHub Mac, so a release needs no Mac at home. The APK and the Linux
 # packages are attached when the release is created; this adds the DMG a few minutes later.
-# The tests are left to build.yml: Mac minutes count tenfold in a private repository.
+# The tests are left to build.yml, which runs them on every push to main.
 on:
   release:
     types: [published]
