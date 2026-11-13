@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -127,6 +130,9 @@ fun WassertigerApp(
     var sessions by remember { mutableStateOf(store.load()) }
     var editing by remember { mutableStateOf<Session?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
+    /** Ids of the sessions marked by a long press, to delete or archive in one go. */
+    var marked by remember { mutableStateOf(emptySet<String>()) }
+    var confirmDeleteMarked by remember { mutableStateOf(false) }
     /** Sessions run, and the list is up to start one more beside them. */
     var picking by remember { mutableStateOf(false) }
     LaunchedEffect(runs.isEmpty()) { if (runs.isEmpty()) picking = false }
@@ -166,6 +172,19 @@ fun WassertigerApp(
             },
         ) { leaving = null }
     }
+    if (confirmDeleteMarked) {
+        val doomed = sessions.filter { it.id in marked }
+        Confirm(
+            if (doomed.size == 1) "„${doomed.first().name}“ löschen?" else "${doomed.size} Sessions löschen?",
+            (if (doomed.size == 1) "" else doomed.joinToString(", ") { it.name } + ". ") + "Das lässt sich nicht rückgängig machen.",
+            "Löschen",
+            onConfirm = {
+                sessions = sessions.filter { it.id !in marked }
+                store.save(sessions)
+                marked = emptySet()
+            },
+        ) { confirmDeleteMarked = false }
+    }
     // Key events need a focused node; the lists have no text fields, so the whole page takes focus.
     LaunchedEffect(onList) { if (onList) runCatching { focus.requestFocus() } }
 
@@ -197,7 +216,7 @@ fun WassertigerApp(
                     isNew = sessions.none { it.id == edit.id },
                     togglConnected = togglToken != null,
                     loadProjects = toggl::projects,
-                    insertable = sessions.filter { it.music == edit.music && it.id != edit.id }.sortedBy { it.template } +
+                    insertable = sessions.filter { it.music == edit.music && it.id != edit.id && !it.archived }.sortedBy { it.template } +
                         (if (edit.music) musicPresets() else presets()).filter { p -> sessions.none { it.name == p.name } },
                     onPreviewChime = onPreviewChime,
                     onSaveAsTemplate = { template ->
@@ -216,6 +235,7 @@ fun WassertigerApp(
                     onDelete = {
                         sessions = sessions.filter { it.id != edit.id }
                         store.save(sessions)
+                        marked = marked - edit.id
                         editing = null
                     },
                     onCancel = { editing = null },
@@ -234,7 +254,23 @@ fun WassertigerApp(
                 )
                 else -> Column {
                     if (picking) PlatformBackHandler { picking = false }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (marked.isNotEmpty()) {
+                        PlatformBackHandler { marked = emptySet() }
+                        val chosen = sessions.filter { it.id in marked }
+                        // Only archived ones marked: the same button brings them back.
+                        val restore = chosen.all { it.archived }
+                        MarkedBar(
+                            count = chosen.size,
+                            restore = restore,
+                            onArchive = {
+                                sessions = sessions.map { if (it.id in marked) it.copy(archived = !restore) else it }
+                                store.save(sessions)
+                                marked = emptySet()
+                            },
+                            onDelete = { confirmDeleteMarked = true },
+                            onCancel = { marked = emptySet() },
+                        )
+                    } else Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Wassertiger",
                             style = MaterialTheme.typography.headlineMedium,
@@ -257,8 +293,15 @@ fun WassertigerApp(
                         val music = page == 1
                         ListScreen(
                             music = music,
-                            sessions = sessions.filter { !it.template && it.music == music },
-                            templates = sessions.filter { it.template && it.music == music },
+                            sessions = sessions.filter { !it.template && !it.archived && it.music == music },
+                            templates = sessions.filter { it.template && !it.archived && it.music == music },
+                            archived = sessions.filter { it.archived && it.music == music },
+                            marked = marked,
+                            onMark = { marked = if (it.id in marked) marked - it.id else marked + it.id },
+                            onRestore = { restored ->
+                                sessions = sessions.map { if (it.id == restored.id) it.copy(archived = false) else it }
+                                store.save(sessions)
+                            },
                             header = {
                                 if (picking && runs.isNotEmpty()) RunningBanner(runs) { picking = false }
                                 header()
@@ -341,11 +384,19 @@ private fun ListScreen(
     music: Boolean,
     sessions: List<Session>,
     templates: List<Session>,
+    /** Sessions and templates put aside, shown folded up at the end. */
+    archived: List<Session>,
+    /** Ids marked by a long press; while there are any, a tap marks too instead of editing. */
+    marked: Set<String>,
+    onMark: (Session) -> Unit,
+    onRestore: (Session) -> Unit,
     header: @Composable () -> Unit,
     onStart: (Session) -> Unit,
     onEdit: (Session) -> Unit,
     onNew: (Session?) -> Unit,
 ) {
+    var archiveOpen by remember { mutableStateOf(false) }
+    val selecting = marked.isNotEmpty()
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -362,7 +413,7 @@ private fun ListScreen(
             }
         }
         itemsIndexed(sessions, key = { _, s -> s.id }) { _, session ->
-            SessionCard(session, onEdit) {
+            SessionCard(session, selecting, session.id in marked, onEdit, onMark) {
                 Button(onClick = { onStart(session) }) { Text("Start") }
             }
         }
@@ -394,20 +445,69 @@ private fun ListScreen(
         if (templates.isNotEmpty()) {
             item { Text("Meine Vorlagen", style = MaterialTheme.typography.labelLarge) }
             itemsIndexed(templates, key = { _, s -> s.id }) { _, template ->
-                SessionCard(template, onEdit) {
+                SessionCard(template, selecting, template.id in marked, onEdit, onMark) {
                     FilledTonalButton(onClick = { onNew(template) }) { Text("Neu daraus") }
                 }
             }
-            item { Spacer(Modifier.height(24.dp)) }
+        }
+        if (archived.isNotEmpty()) {
+            item {
+                TextButton(onClick = { archiveOpen = !archiveOpen }) {
+                    Text("Archiv (${archived.size}) " + if (archiveOpen) "▴" else "▾")
+                }
+            }
+            if (archiveOpen) itemsIndexed(archived, key = { _, s -> s.id }) { _, session ->
+                SessionCard(session, selecting, session.id in marked, onEdit, onMark) {
+                    FilledTonalButton(onClick = { onRestore(session) }) { Text("Zurückholen") }
+                }
+            }
+        }
+        item {
+            Text(
+                "Lange drücken markiert Sessions – zum Löschen oder Archivieren mehrerer auf einmal.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 24.dp),
+            )
         }
     }
 }
 
-/** Tapping the card edits [session]; [action] sits on the right. */
+/** Stands in for the title while sessions are marked: how many, and what to do with them. */
 @Composable
-private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Composable () -> Unit) {
+private fun MarkedBar(count: Int, restore: Boolean, onArchive: () -> Unit, onDelete: () -> Unit, onCancel: () -> Unit) {
+    Row(Modifier.padding(start = 4.dp, top = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onCancel, modifier = Modifier.semantics { contentDescription = "Markierung aufheben" }) { Text("✕") }
+        Text("$count markiert", style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f))
+        TextButton(onClick = onArchive) { Text(if (restore) "Zurückholen" else "Archivieren") }
+        TextButton(onClick = onDelete) { Text("Löschen", color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+/**
+ * Tapping the card edits [session]; [action] sits on the right. A long press marks it; while any card
+ * is marked ([selecting]), a tap marks or unmarks too and a tick stands in for [action].
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SessionCard(
+    session: Session,
+    selecting: Boolean,
+    marked: Boolean,
+    onEdit: (Session) -> Unit,
+    onMark: (Session) -> Unit,
+    action: @Composable () -> Unit,
+) {
     Card(
-        Modifier.fillMaxWidth().clickable { onEdit(session) },
+        Modifier.fillMaxWidth()
+            .then(if (marked) Modifier.border(2.dp, Amber, CardDefaults.shape) else Modifier)
+            .clip(CardDefaults.shape)
+            .combinedClickable(
+                onLongClick = { onMark(session) },
+                onLongClickLabel = "Markieren",
+                onClick = { if (selecting) onMark(session) else onEdit(session) },
+            )
+            .semantics { if (selecting) selected = marked },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -427,7 +527,11 @@ private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Co
                     maxLines = 2,
                 )
             }
-            action()
+            if (selecting) {
+                Text(if (marked) "✓" else "○", fontSize = 28.sp, color = Amber, modifier = Modifier.padding(horizontal = 16.dp))
+            } else {
+                action()
+            }
         }
     }
 }

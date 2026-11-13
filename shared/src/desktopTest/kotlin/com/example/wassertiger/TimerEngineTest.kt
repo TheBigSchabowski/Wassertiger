@@ -116,6 +116,11 @@ class TimerEngineTest {
         val fromTemplate = template.newSession()
         assertTrue(!fromTemplate.template && fromTemplate.id != template.id && fromTemplate.steps == template.steps)
 
+        // Archived survives saving; what is made from an archived session is not archived itself.
+        store.save(listOf(session.copy(archived = true), template))
+        assertEquals(listOf(true, false), store.load().map { it.archived })
+        assertTrue(!session.copy(archived = true).newSession().archived && !session.copy(archived = true).asTemplate().archived)
+
         // Data written by 1.0.0 has no rounds and plays once.
         saved = """[{"id":"a","name":"Alt","steps":[{"seconds":10,"name":""}]}]"""
         assertEquals(1, store.load().single().rounds)
