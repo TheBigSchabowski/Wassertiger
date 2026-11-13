@@ -31,9 +31,9 @@ object Widgets {
         }
     }
 
-    /** What the app's lists show: own sessions, timer first, then music; no templates. */
+    /** What the app's lists show: own sessions, timer first, then music; no templates, nothing archived. */
     fun startable(context: Context): List<Session> =
-        sessionStore(context).load().filter { !it.template }.sortedBy { it.music }
+        sessionStore(context).load().filter { !it.template && !it.archived }.sortedBy { it.music }
 
     /** The session a [SessionWidget] starts, picked in [SessionWidgetConfigActivity]. */
     fun tileSession(context: Context, widgetId: Int): String? = tilePrefs(context).getString(key(widgetId), null)

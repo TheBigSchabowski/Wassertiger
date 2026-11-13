@@ -29,6 +29,11 @@ eigenen Knöpfe, auf Android ihre eigene Benachrichtigung. Musik spielt immer nu
 Eigene Vorlagen: im Editor „Als Vorlage speichern“. Sie stehen dann unter „Meine Vorlagen“; „Neu daraus“
 legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie.
 
+**Markieren, löschen, archivieren:** Ein langer Druck auf eine Session (oder Vorlage) markiert sie; danach
+markiert jeder Tipp weitere. Oben steht dann, wie viele markiert sind, mit „Archivieren“ und „Löschen“ (fragt
+nach); ✕ oder Zurück hebt die Markierung auf. Archivierte Sessions verschwinden aus Liste, Widgets und
+„Session einfügen“ und liegen ganz unten unter „Archiv“ – dort holt „Zurückholen“ sie wieder.
+
 | Plattform | Signal beim Wechsel |
 |---|---|
 | Android | Vibration (Dauer pro Session: 1–8 s) + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |

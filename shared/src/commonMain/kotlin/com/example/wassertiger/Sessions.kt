@@ -93,6 +93,8 @@ data class Session(
     val stopwatch: Boolean = false,
     /** A stopwatch lights up / buzzes every this many seconds; 0 = never, a plain stopwatch. */
     val signalEvery: Int = 0,
+    /** Put aside: out of the lists, widgets and "Session einfügen", but kept under "Archiv" to bring back. */
+    val archived: Boolean = false,
 ) {
     /** Whether interval changes signal: a stopwatch without [signalEvery] never does. */
     val signals: Boolean get() = !stopwatch || signalEvery > 0
@@ -127,8 +129,8 @@ data class Session(
         return Step(seconds = all.sumOf { it.seconds }, name = name, block = all)
     }
     /** A fresh session to edit and start, built from this one (a preset or template). */
-    fun newSession(): Session = copy(id = newId(), template = false)
-    fun asTemplate(): Session = copy(id = newId(), template = true)
+    fun newSession(): Session = copy(id = newId(), template = false, archived = false)
+    fun asTemplate(): Session = copy(id = newId(), template = true, archived = false)
     val roundSeconds: Int get() = steps.sumOf { it.seconds }
     /** Length of the whole run, null when [endless]. */
     val totalSeconds: Int? get() = if (endless) null else roundSeconds * rounds
@@ -366,6 +368,7 @@ class SessionStore(private val storage: SessionStorage) {
             togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
             stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
             signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
+            archived = o["archived"]?.jsonPrimitive?.boolean ?: false,
         ).also { require(it.steps.isNotEmpty() && it.steps.all { s -> s.seconds > 0 }) }
     }
 
@@ -395,6 +398,7 @@ class SessionStore(private val storage: SessionStorage) {
                         put("stopwatch", true)
                         put("signalEvery", session.signalEvery)
                     }
+                    if (session.archived) put("archived", true)
                     put("steps", writeSteps(session.steps))
                 })
             }
