@@ -151,6 +151,11 @@ Fertige Pakete (APK, .deb, Linux-tar.gz) hängen an den GitHub-Releases. Das Rel
 (+ `.pass`); fehlt der Schlüssel, bleibt das APK unsigniert. Updates lassen sich nur mit demselben
 Schlüssel über eine installierte Version spielen.
 
+**Release ohne Mac:** Sobald ein GitHub-Release veröffentlicht wird, baut der Workflow `macOS-DMG`
+(`.github/workflows/dmg.yml`) das DMG auf einem GitHub-Mac und hängt es nach ein paar Minuten an das Release.
+Für ein älteres Release: auf GitHub unter Actions → macOS-DMG → „Run workflow“ den Tag eintragen (z. B. `v1.12.0`).
+Das DMG ist nicht von Apple beglaubigt; beim ersten Öffnen einmal Rechtsklick → „Öffnen“.
+
 `./gradlew :androidApp:testDebugUnitTest` startet die App ohne Gerät (Robolectric) und spielt die
 Beispiel-Session an.
 
