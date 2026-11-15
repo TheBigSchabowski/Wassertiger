@@ -220,7 +220,7 @@ data class TogglRun(
     val ended: Boolean = false,
     /** [TogglTracker.onReport] has told about it. */
     val reported: Boolean = false,
-    /** Stopp is its normal end: never tagged [TOGGL_ABORTED_TAG]. */
+    /** Stopp is its normal end (a stopwatch, or a run counting on past its time): never tagged [TOGGL_ABORTED_TAG]. */
     val stopwatch: Boolean = false,
 ) {
     /** Counting in Toggl right now. */
@@ -244,7 +244,8 @@ data class TogglRun(
  * and project set for it in the editor; one that asks for them waits until they are given ([TogglRun.waiting]).
  * Only intervals with [Step.track] count: a pause or an untracked interval (a Pomodoro break) ends
  * the entry, the next tracked one starts a new one; the end stops it, and Stopp before the end
- * stops it there and tags it [TOGGL_ABORTED_TAG]. Toggl runs one timer at a time, so a run only
+ * stops it there and tags it [TOGGL_ABORTED_TAG]. A run that counts on past its time ([RunState.overtime])
+ * counts on in Toggl too, as part of its last interval; its Stopp is its end. Toggl runs one timer at a time, so a run only
  * counts live there while no other timer runs (the user's own included, which is never touched);
  * otherwise its stretches are booked as they end.
  *
@@ -408,15 +409,18 @@ class TogglTracker(
                 if (counting == tracked) return
                 change(id) { it?.close(now)?.openIf(tracked, now) }
             }
+            // From here on Stopp is the normal end – also for whoever takes the run over (see adopt).
+            TimerEvent.Overtime -> change(id) { t -> t?.copy(stopwatch = true) }
             TimerEvent.Finished -> change(id) { t -> t?.close(run.endedAt)?.copy(ended = true) }
             TimerEvent.Stopped -> change(id) { t ->
                 when {
                     t == null -> null
                     // Dropped after moments (started by mistake): leaves no trace. One that stays on
                     // screen as "Gestoppt" (see keepStopped) stays in Toggl.
-                    (!run.stopped || run.session.stopwatch) && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
-                    // Stopp is how a stopwatch ends: nothing aborted about it.
-                    run.session.stopwatch -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(ended = true)
+                    // One past its time did what it set out to do, however short.
+                    (!run.stopped || run.session.stopwatch) && !run.overtime && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
+                    // Stopp is how a stopwatch ends, and a run counting on past its time: nothing aborted about it.
+                    run.session.stopwatch || run.overtime -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(ended = true)
                     else -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(aborted = true, ended = true)
                 }
             }
@@ -729,8 +733,9 @@ private fun readTogglRun(element: JsonElement): TogglRun {
 }
 
 /**
- * For [TimerEngine.keepStopped]: a stopwatch always stays to show its reading; a run Toggl follows
+ * For [TimerEngine.keepStopped]: a stopwatch always stays to show its reading, as does a run that
+ * counted on past its time; a run Toggl follows
  * stays as "Gestoppt" when stopped after a minute or more, so its entry can be renamed or deleted.
  */
 fun keepStopped(settings: SettingsStore): (RunState) -> Boolean =
-    { it.session.stopwatch || settings.togglToken != null && it.session.toggl && it.activeMillis() >= TOGGL_MIN_MILLIS }
+    { it.countsUp || settings.togglToken != null && it.session.toggl && it.activeMillis() >= TOGGL_MIN_MILLIS }

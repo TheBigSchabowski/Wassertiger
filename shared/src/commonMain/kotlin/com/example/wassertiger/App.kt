@@ -425,6 +425,10 @@ private fun ListScreen(
                 }
                 if (!music) OutlinedButton(onClick = { onNew(newStopwatch()) }, modifier = Modifier.weight(1f)) { Text("+ Neue Stoppuhr") }
             }
+            // The third kind: a time that, once up, counts on until Stopp.
+            if (!music) OutlinedButton(onClick = { onNew(newOvertimeTimer()) }, modifier = Modifier.fillMaxWidth()) {
+                Text("+ Neuer Timer, der weiterzählt")
+            }
         }
         item {
             Column(Modifier.padding(bottom = 24.dp)) {
@@ -637,6 +641,8 @@ private fun EditorScreen(
     var name by remember { mutableStateOf(initial.name) }
     var endless by remember { mutableStateOf(initial.endless) }
     var roundsText by remember { mutableStateOf(if (initial.endless) "1" else initial.rounds.toString()) }
+    /** Counts on after its end until Stopp; nothing for an endless one, which has no end. */
+    var overtime by remember { mutableStateOf(initial.overtime) }
     var sound by remember { mutableStateOf(initial.sound) }
     var fifth by remember { mutableStateOf(initial.fifth) }
     var kit by remember { mutableStateOf(initial.kit) }
@@ -706,6 +712,7 @@ private fun EditorScreen(
             }
         },
         rounds = rounds ?: ENDLESS,
+        overtime = overtime && !endless,
         sound = sound,
         fifth = fifth,
         kit = kit,
@@ -909,6 +916,17 @@ private fun EditorScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Endlos, bis Stopp")
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = overtime && !endless, onCheckedChange = { overtime = it }, enabled = !endless)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Nach dem Ende weiterzählen, bis Stopp", modifier = Modifier.weight(1f))
+                }
+                if (overtime && !endless) Text(
+                    "Ist die Zeit um, kommt das Signal vom Ende – danach zählt sie wie eine Stoppuhr weiter, " +
+                        "auch in Toggl, bis du Stopp drückst.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 val round = parsed.filterNotNull().sum()
                 Text(
                     when {
@@ -1277,7 +1295,12 @@ private fun RunPanel(
                 fontWeight = FontWeight.Bold,
                 color = Amber,
             )
-            if (run.session.stopwatch) Text(formatClock(run.elapsedMs()), style = MaterialTheme.typography.displaySmall)
+            if (run.countsUp) Text(formatClock(run.elapsedMs()), style = MaterialTheme.typography.displaySmall)
+            if (run.overtime) Text(
+                "davon ${formatClock(run.overtimeMs())} länger als geplant",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(if (big) 32.dp else 8.dp))
             runExtra(run)
             Spacer(Modifier.height(16.dp))
@@ -1305,6 +1328,28 @@ private fun RunPanel(
             Row(horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 8.dp)) {
                 OutlinedButton(onClick = { engine.stop(run.id) }, contentPadding = padding) { Text("Stopp") }
                 Button(onClick = { engine.togglePause(run.id) }, contentPadding = padding) { Text(if (run.paused) "Weiter" else "Pause") }
+            }
+            runExtra(run)
+            return@Column
+        }
+        if (run.overtime) {
+            // The time is up: counts on like a stopwatch, and Stopp is the way out.
+            Text("Zeit um", style = MaterialTheme.typography.titleMedium)
+            Text(
+                formatClock(run.elapsedMs(now)),
+                fontSize = if (big) 96.sp else 56.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (run.paused) MaterialTheme.colorScheme.onSurfaceVariant else Amber,
+            )
+            Text(
+                "+${formatClock(run.overtimeMs(now))} · läuft weiter bis Stopp",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(if (big) 48.dp else 16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 8.dp)) {
+                Button(onClick = { engine.stop(run.id) }, contentPadding = padding) { Text("Stopp") }
+                OutlinedButton(onClick = { engine.togglePause(run.id) }, contentPadding = padding) { Text(if (run.paused) "Weiter" else "Pause") }
             }
             runExtra(run)
             return@Column
@@ -1338,6 +1383,7 @@ private fun RunPanel(
         val next = run.nextStep
         Text(
             when {
+                next == null && run.session.overtime -> "Danach: zählt weiter bis Stopp"
                 next == null -> "Danach: fertig"
                 music -> "Danach: ${next.name.ifBlank { next.soundLabel() }} · ${formatDuration(next.seconds)}"
                 else -> "Danach: ${formatDuration(next.seconds)}" + if (next.name.isNotBlank()) " · ${next.name}" else ""
@@ -1370,6 +1416,7 @@ private fun RunningBanner(runs: List<RunState>, onOpen: () -> Unit) {
                         "${run.session.name} · " + when {
                             run.finished -> if (run.stopped) "gestoppt" else "fertig"
                             run.paused -> "pausiert"
+                            run.overtime -> "Zeit um · " + formatClock(run.elapsedMs(now))
                             run.session.stopwatch -> formatClock(run.elapsedMs(now))
                             else -> formatDuration(run.remainingSeconds(now))
                         },

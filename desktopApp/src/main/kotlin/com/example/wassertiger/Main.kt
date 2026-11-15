@@ -192,6 +192,11 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
                     flash = Flash(state.id, t, s, true, state.session.flashMillis, state.session.flashColor)
                     if (engine.active.isEmpty()) stayAwake.stop()
                 }
+                // The time is up but the run counts on: the signal of the end, the machine stays awake.
+                TimerEvent.Overtime -> {
+                    chimes.signal(state.session, finish = true)
+                    flash = Flash(state.id, t, s, true, state.session.flashMillis, state.session.flashColor)
+                }
                 TimerEvent.Stopped -> if (engine.active.isEmpty()) stayAwake.stop()
                 TimerEvent.PauseChanged -> {}
             }

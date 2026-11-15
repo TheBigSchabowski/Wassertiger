@@ -130,15 +130,12 @@ class TimerService : Service() {
             }
             TimerEvent.PauseChanged -> updateNotifications()
             TimerEvent.Finished -> {
-                val buzzMs = vibrate(state, Buzz.FINISH)
-                chimes.signal(state.session, finish = true)
-                val chimeMs = if (state.session.tone.sounds(finish = true)) chimeMillis(state.session.chime, finish = true) else 0
-                wakeScreen(state)
+                val signalMs = endSignal(state)
                 if (engine.active.isEmpty()) {
                     finishing = true
                     scope.launch {
                         // Let the final vibration, tone and flash complete before releasing locks.
-                        delay(maxOf(state.session.flashMillis + 500, buzzMs + 500, chimeMs + 500))
+                        delay(signalMs)
                         // Unless another session was started meanwhile.
                         if (finishing && engine.active.isEmpty()) shutdown()
                     }
@@ -146,9 +143,19 @@ class TimerService : Service() {
                     updateNotifications()
                     scope.launch {
                         // The final signal plays first; then only what still signals keeps the CPU up.
-                        delay(maxOf(state.session.flashMillis + 500, buzzMs + 500, chimeMs + 500))
+                        delay(signalMs)
                         releaseIfQuiet()
                     }
+                }
+            }
+            // The time is up and the run counts on: the signal of the end, but everything stays up.
+            TimerEvent.Overtime -> {
+                val signalMs = endSignal(state)
+                updateNotifications()
+                scope.launch {
+                    // From here it only counts, like a quiet stopwatch.
+                    delay(signalMs)
+                    releaseIfQuiet()
                 }
             }
             TimerEvent.Stopped -> if (engine.active.isEmpty()) {
@@ -161,9 +168,18 @@ class TimerService : Service() {
         Widgets.update(this)
     }
 
-    /** Only quiet stopwatches left: nothing needs the CPU awake (see [start]). */
+    /** Buzzes, sounds and lights up as at the end of a run; returns how long all of that takes in ms. */
+    private fun endSignal(state: RunState): Long {
+        val buzzMs = vibrate(state, Buzz.FINISH)
+        chimes.signal(state.session, finish = true)
+        val chimeMs = if (state.session.tone.sounds(finish = true)) chimeMillis(state.session.chime, finish = true) else 0
+        wakeScreen(state)
+        return maxOf(state.session.flashMillis + 500, buzzMs + 500, chimeMs + 500)
+    }
+
+    /** Only quiet stopwatches and runs counting on past their time left: nothing needs the CPU awake (see [start]). */
     private fun releaseIfQuiet() {
-        if (engine.active.none { it.session.signals }) cpuLock?.takeIf { it.isHeld }?.release()
+        if (engine.active.none { it.signalsAhead }) cpuLock?.takeIf { it.isHeld }?.release()
     }
 
     private fun shutdown() {
@@ -245,12 +261,14 @@ class TimerService : Service() {
 
     private fun postFlash(state: RunState) {
         val (title, text) = state.flashText()
+        // The end, or the time is up and it counts on: green, and the headline says so.
+        val over = state.finished || state.overtime
         val flashIntent = Intent(this, FlashActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(FlashActivity.EXTRA_RUN_ID, state.id)
             .putExtra(FlashActivity.EXTRA_TITLE, title)
             .putExtra(FlashActivity.EXTRA_TEXT, text)
-            .putExtra(FlashActivity.EXTRA_FINISHED, state.finished)
+            .putExtra(FlashActivity.EXTRA_FINISHED, over)
             .putExtra(FlashActivity.EXTRA_MILLIS, state.session.flashMillis)
             .putExtra(FlashActivity.EXTRA_COLOR, state.session.flashColor)
         val pending = PendingIntent.getActivity(
@@ -259,25 +277,25 @@ class TimerService : Service() {
         )
         val builder = Notification.Builder(this, CHANNEL_FLASH)
             .setSmallIcon(R.drawable.ic_stat_timer)
-            .setContentTitle(if (state.finished) title else state.session.name)
-            .setContentText(if (state.finished) text else listOf(title, text).filter { it.isNotBlank() }.joinToString(" · "))
+            .setContentTitle(if (over) title else state.session.name)
+            .setContentText(if (over) text else listOf(title, text).filter { it.isNotBlank() }.joinToString(" · "))
             .setCategory(Notification.CATEGORY_ALARM)
             .setFullScreenIntent(pending, true)
             .setContentIntent(mainPendingIntent())
             .setAutoCancel(true)
             // Never outlive the interval, or its countdown runs past zero.
-            .setTimeoutAfter(if (state.finished) state.session.flashMillis + 1500 else minOf(state.session.flashMillis + 1500, state.remainingMs()))
+            .setTimeoutAfter(if (over) state.session.flashMillis + 1500 else minOf(state.session.flashMillis + 1500, state.remainingMs()))
         // The banner (screen on) keeps counting the new interval down instead of freezing on its length.
         if (!state.finished) builder.countDown(state)
         notifications.cancel(ID_FLASH) // re-posting is what fires the full-screen intent again
         notifications.notify(ID_FLASH, builder.build())
     }
 
-    /** The interval's countdown, or a stopwatch's reading counting up. */
+    /** The interval's countdown, or the running time counting up (a stopwatch, or past the planned time). */
     private fun Notification.Builder.countDown(run: RunState): Notification.Builder =
         setUsesChronometer(true)
-            .setChronometerCountDown(!run.session.stopwatch)
-            .setWhen(System.currentTimeMillis() + if (run.session.stopwatch) -run.elapsedMs() else run.remainingMs())
+            .setChronometerCountDown(!run.countsUp)
+            .setWhen(System.currentTimeMillis() + if (run.countsUp) -run.elapsedMs() else run.remainingMs())
             .setShowWhen(true)
 
     /**
@@ -344,7 +362,9 @@ class TimerService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
         val step = s.step
         if (step != null) {
-            val label = if (s.session.stopwatch) {
+            val label = if (s.overtime) {
+                "Zeit um · läuft weiter bis Stopp"
+            } else if (s.session.stopwatch) {
                 s.session.summary()
             } else {
                 listOf(step.name, "Schritt ${s.index + 1} / ${s.session.steps.size}", s.roundLabel)
@@ -361,7 +381,7 @@ class TimerService : Service() {
         builder.addAction(
             Notification.Action.Builder(null, if (s.paused) "Weiter" else "Pause", actionPendingIntent(this, ACTION_TOGGLE_PAUSE, s.id)).build()
         )
-        if (!s.session.stopwatch) {
+        if (!s.countsUp) {
             builder.addAction(Notification.Action.Builder(null, "Überspringen", actionPendingIntent(this, ACTION_SKIP, s.id)).build())
         }
         builder.addAction(Notification.Action.Builder(null, "Stopp", actionPendingIntent(this, ACTION_STOP, s.id)).build())

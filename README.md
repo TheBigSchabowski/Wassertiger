@@ -55,6 +55,14 @@ Display schon an ist.
 mit einem Signal *alle N Sekunden*, das wie bei den Sessions leuchtet, vibriert und/oder tönt. Nach Stopp bleibt die
 Zeit stehen. Toggl geht wie bei jeder Session (Stopp ist hier das normale Ende, nicht „abgebrochen“).
 
+**Timer, der weiterzählt:** „+ Neuer Timer, der weiterzählt“ unter den Sessions – die dritte Art neben Session und
+Stoppuhr. Du stellst eine Zeit ein (z. B. 20 Minuten mit Mauro); ist sie um, kommt das Signal vom Ende (Vibration,
+grünes Aufleuchten, auf Wunsch Ton), und die Uhr zählt von selbst wie eine Stoppuhr weiter, bis du Stopp drückst.
+Dauert es fünf Minuten länger, steht am Ende „Fertig! 25:00 – davon 5:00 länger als geplant“; wer gleich beim Signal
+Stopp drückt, hat genau die geplante Zeit. Toggl zählt die ganze Zeit als einen Eintrag mit, und Stopp ist hier das
+normale Ende (nur wer *vor* Ablauf stoppt, bricht ab). Dahinter steckt der Schalter „Nach dem Ende weiterzählen, bis
+Stopp“ im Editor unter „Wiederholen“ – den hat jede Session, auch ein Pomodoro oder eine Musik-Übung kann so auslaufen.
+
 **Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Jede Session wählt im
 Editor unter „Toggl“ eine von drei Möglichkeiten:
 
