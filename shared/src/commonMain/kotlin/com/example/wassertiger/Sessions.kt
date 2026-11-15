@@ -100,6 +100,11 @@ data class Session(
     val signalEvery: Int = 0,
     /** Put aside: out of the lists, widgets and "Session einfügen", but kept under "Archiv" to bring back. */
     val archived: Boolean = false,
+    /**
+     * When its time is up it gives the signal of the end and then counts on like a stopwatch, Toggl
+     * included, until Stopp (a walk planned for 20 minutes that takes 25). Nothing for an [endless] one.
+     */
+    val overtime: Boolean = false,
 ) {
     /** Whether interval changes signal: a stopwatch without [signalEvery] never does. */
     val signals: Boolean get() = !stopwatch || signalEvery > 0
@@ -155,7 +160,8 @@ data class Session(
             ToneMode.END -> " Am Ende ertönt ${chime.article()}."
             ToneMode.EVERY -> " Dazu ertönt ${chime.article()}."
         }
-        return (if (stopwatch) "alle ${formatDuration(signalEvery)} " else "bei jedem Wechsel ") + light + sound
+        return (if (stopwatch) "alle ${formatDuration(signalEvery)} " else "bei jedem Wechsel ") + light + sound +
+            if (overtime && !endless) " Nach dem Ende zählt die Zeit weiter, bis du Stopp drückst." else ""
     }
 }
 
@@ -271,6 +277,9 @@ fun stopwatchSteps(signalEvery: Int): List<Step> = listOf(Step(if (signalEvery >
 
 private const val STOPWATCH_QUIET_SECONDS = 24 * 3600
 
+/** A new timer of the third kind: one stretch of time, then it counts on until Stopp (see [Session.overtime]). */
+fun newOvertimeTimer(): Session = Session(name = "Timer", steps = listOf(Step(20 * 60)), overtime = true)
+
 /** A new stopwatch: counts up, no signal, Toggl off. */
 fun newStopwatch(): Session = Session(name = "Stoppuhr", steps = stopwatchSteps(0), rounds = ENDLESS, stopwatch = true)
 
@@ -282,7 +291,7 @@ fun Session.summary(): String {
         endless -> "$intervals · endlos wiederholt"
         rounds == 1 -> "$intervals · ${formatDuration(roundSeconds)}"
         else -> "$intervals × $rounds Runden · ${formatDuration(roundSeconds * rounds)}"
-    }
+    } + if (overtime && !endless) " · danach weiter bis Stopp" else ""
 }
 
 /** Music intervals: a plain number counts minutes ("20"), anything with a colon as in [parseDuration]. */
@@ -375,6 +384,7 @@ class SessionStore(private val storage: SessionStorage) {
             stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
             signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
             archived = o["archived"]?.jsonPrimitive?.boolean ?: false,
+            overtime = o["overtime"]?.jsonPrimitive?.boolean ?: false,
         ).also { require(it.steps.isNotEmpty() && it.steps.all { s -> s.seconds > 0 }) }
     }
 
@@ -408,6 +418,7 @@ class SessionStore(private val storage: SessionStorage) {
                         put("signalEvery", session.signalEvery)
                     }
                     if (session.archived) put("archived", true)
+                    if (session.overtime) put("overtime", true)
                     put("steps", writeSteps(session.steps))
                 })
             }

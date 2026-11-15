@@ -352,6 +352,74 @@ class TimerEngineTest {
     }
 
     @Test
+    fun countsOnPastItsTimeUntilStopp() = runBlocking {
+        val engine = TimerEngine(this)
+        engine.keepStopped = { it.countsUp }
+        val events = mutableListOf<TimerEvent>()
+        engine.listener = { e, _ -> events += e }
+        val walk = newOvertimeTimer().copy(name = "Mauro", steps = listOf(Step(1)))
+        assertEquals("1 Intervall · 1 s · danach weiter bis Stopp", walk.summary())
+        assertEquals("1 Intervall · 20:00 · danach weiter bis Stopp", newOvertimeTimer().summary())
+
+        val id = engine.start(walk)
+        assertFalse(engine.run(id)!!.overtime)
+        delay(1400)
+        val over = engine.run(id)!!
+        assertTrue(over.overtime && !over.finished, "the time is up, the run goes on")
+        assertEquals(listOf(TimerEvent.Started, TimerEvent.Overtime), events, "the signal of the end comes once, no Finished")
+        assertTrue(over.overtimeMs() in 300..900, "counts from the moment the time ran out: ${over.overtimeMs()}")
+        assertTrue(over.elapsedMs() in 1300..1900)
+        assertTrue(over.countsUp && !over.signalsAhead)
+        assertEquals("Zeit um" to "Mauro · läuft weiter bis Stopp", over.flashText())
+
+        // Nothing to skip any more; a pause holds both clocks.
+        engine.skip(id)
+        assertTrue(engine.run(id)!!.overtime && !engine.run(id)!!.finished)
+        engine.togglePause(id)
+        val held = engine.run(id)!!.overtimeMs()
+        delay(300)
+        assertEquals(held, engine.run(id)!!.overtimeMs(), "stands still while paused")
+        engine.togglePause(id)
+        delay(200)
+        assertTrue(engine.run(id)!!.overtimeMs() in held + 150..held + 500, "the pause is left out")
+        assertTrue(engine.run(id)!!.overtime && !engine.run(id)!!.finished, "Weiter does not end it")
+
+        engine.stop(id)
+        val done = engine.run(id)!!
+        assertTrue(done.finished && !done.stopped, "Stopp is its normal end, not an abort")
+        assertEquals(TimerEvent.Stopped, events.last())
+        assertFalse(TimerEvent.Finished in events)
+        delay(200)
+        assertEquals(done.overtimeMs(), engine.run(id)!!.overtimeMs(), "the reading stays")
+        assertEquals("Fertig!" to "Mauro", done.flashText())
+
+        // Stopped before its time is up it is an abort like any other session; skipping the last interval starts the overtime.
+        val early = engine.start(walk)
+        engine.stop(early)
+        assertNull(engine.run(early), "nothing kept of a run stopped before its time")
+        val skipped = engine.start(walk)
+        engine.skip(skipped)
+        assertTrue(engine.run(skipped)!!.overtime)
+        engine.stopAll()
+
+        // Without the option the same session just finishes; endless ones never get there.
+        events.clear()
+        engine.start(walk.copy(overtime = false))
+        delay(1300)
+        assertEquals(listOf(TimerEvent.Started, TimerEvent.Finished), events)
+        engine.stopAll()
+
+        var saved: String? = null
+        val store = SessionStore(object : SessionStorage {
+            override fun read() = saved
+            override fun write(json: String) { saved = json }
+        })
+        store.save(listOf(walk, twoSteps))
+        assertEquals(listOf(true, false), store.load().map { it.overtime })
+        assertTrue(walk.signalText().endsWith("Nach dem Ende zählt die Zeit weiter, bis du Stopp drückst."))
+    }
+
+    @Test
     fun stopwatchSignalsAndSaves() {
         assertEquals("0:07", formatClock(7_400))
         assertEquals("12:34", formatClock((12 * 60 + 34) * 1000L))

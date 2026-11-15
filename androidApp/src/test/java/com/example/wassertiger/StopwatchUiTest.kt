@@ -64,4 +64,37 @@ class StopwatchUiTest {
             assertTrue(TimerService.engine.run(id)!!.stopped)
         }
     }
+
+    /** The third kind: a timer that counts on past its time until Stopp. */
+    @Test
+    fun timerCountsOnPastItsTime() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            rule.onNode(list).performScrollToNode(hasText("+ Neuer Timer, der weiterzählt"))
+            rule.onNodeWithText("+ Neuer Timer, der weiterzählt").performClick()
+            rule.onNodeWithText("Name der Session").performTextReplacement("Mauro")
+            rule.onNode(list).performScrollToNode(hasText("Nach dem Ende weiterzählen, bis Stopp"))
+            rule.onNodeWithText("Nach dem Ende weiterzählen, bis Stopp").assertExists()
+            rule.onNodeWithText("Speichern").performClick()
+
+            val saved = sessionStore(context).load().single { it.name == "Mauro" }
+            assertTrue(saved.overtime && !saved.endless)
+            assertEquals(listOf(20 * 60), saved.steps.map { it.seconds })
+            rule.onNode(list).performScrollToNode(hasText("1 Intervall · 20:00 · danach weiter bis Stopp"))
+
+            // The service does not run in the test: started here as it would.
+            TimerService.engine.keepStopped = keepStopped(settingsStore(context))
+            val id = TimerService.engine.start(saved)
+            rule.onNodeWithText("Danach: zählt weiter bis Stopp").assertExists()
+            // The test's clock stands still: skipping the 20 minutes is how their end comes here.
+            rule.onNodeWithText("Überspringen").performScrollTo().performClick()
+            assertTrue(TimerService.engine.run(id)!!.overtime)
+            rule.onNodeWithText("Zeit um").assertExists()
+            rule.onNodeWithText("+0:00 · läuft weiter bis Stopp").assertExists()
+            rule.onNodeWithText("Überspringen").assertDoesNotExist()
+            rule.onNodeWithText("Stopp").performScrollTo().performClick()
+            rule.onNodeWithText("Fertig!").assertExists()
+            val done = TimerService.engine.run(id)!!
+            assertTrue(done.finished && !done.stopped)
+        }
+    }
 }

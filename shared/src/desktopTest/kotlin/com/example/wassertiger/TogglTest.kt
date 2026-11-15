@@ -530,6 +530,42 @@ class TogglTest {
     }
 
     @Test
+    fun pastItsTimeCountsOnAndStoppIsItsEnd() = runBlocking {
+        val toggl = tracker(this)
+        val walk = newOvertimeTimer().copy(name = "Mauro", toggl = true)
+        val r = run(27, minutesAgo = 25, session = walk)
+        toggl.onEvent(TimerEvent.Started, r)
+        toggl.idle()
+        val over = r.copy(overtimeAt = monotonicMillis() - 5 * 60_000)
+        toggl.onEvent(TimerEvent.Overtime, over)
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(27).live, "counts on in Toggl once the time is up")
+        assertNull(server.running!!.stop)
+
+        toggl.onEvent(TimerEvent.Stopped, over.copy(finished = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        val t = toggl.runs.value.getValue(27)
+        assertTrue(t.synced && t.ended && !t.aborted)
+        val e = server.entries.values.single()
+        assertEquals("Mauro", e.description)
+        assertTrue(e.tags.isEmpty(), "the five minutes more are not an abort")
+        assertTrue(t.millis() >= 25 * 60_000L, "the whole 25 minutes are one entry")
+
+        // A short timer that ran out is booked however short; stopped before its time it is an abort like any other.
+        val short = run(28, minutesAgo = 0, session = walk)
+        toggl.onEvent(TimerEvent.Started, short)
+        toggl.onEvent(TimerEvent.Overtime, short.copy(overtimeAt = monotonicMillis()))
+        toggl.onEvent(TimerEvent.Stopped, short.copy(overtimeAt = monotonicMillis(), finished = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertFalse(toggl.runs.value.getValue(28).deleted)
+        val early = run(29, minutesAgo = 12, session = walk)
+        toggl.onEvent(TimerEvent.Started, early)
+        toggl.onEvent(TimerEvent.Stopped, early.copy(finished = true, stopped = true, endedAt = wallClockMillis()))
+        toggl.idle()
+        assertTrue(toggl.runs.value.getValue(29).aborted)
+    }
+
+    @Test
     fun configuredProjectChoicesWithAndWithoutDescription() = runBlocking {
         val musik = TogglProject(1, "Musik", 7)
         val schach = TogglProject(2, "Schach", 7)
