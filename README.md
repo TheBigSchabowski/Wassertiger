@@ -61,7 +61,10 @@ Editor unter „Toggl“ eine von drei Möglichkeiten:
 - **Nicht erfassen** – Standard; die Session benutzt Toggl gar nicht.
 - **Immer gleich** – wird automatisch erfasst: ohne Angaben unter dem Session-Namen (z. B. „Dankbarkeit“), oder mit
   Projekt aus deiner Toggl-Liste und optionaler Beschreibung (z. B. nur „Musik“).
-- **Vor dem Start fragen** – „Start“ fragt erst nach Projekt und Beschreibung (z. B. beim Pomodoro).
+- **Vor dem Start fragen** – „Start“ fragt erst nach Projekt und Beschreibung (z. B. beim Pomodoro). Im Editor
+  lässt sich die Auswahl auf bestimmte Projekte eingrenzen und pro Projekt festlegen, ob eine Beschreibung abgefragt
+  wird (z. B. *Musik* und *Schach* mit Beschreibung, *Mauro* und *Arbeit* ohne Beschreibung); neue Toggl-Projekte
+  entstehen dort direkt über „+ Neues Projekt …“.
 
 Erfasst wird die **ganze Session als ein Block** (ein Pomodoro = 2 Stunden), auch über den Pause-Knopf hinweg.
 Wer nur einzelne Intervalle erfassen will, schaltet „Nur diese Intervalle erfassen“ ein und wählt sie aus; wer

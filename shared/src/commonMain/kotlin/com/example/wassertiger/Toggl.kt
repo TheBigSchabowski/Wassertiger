@@ -41,6 +41,9 @@ expect fun clockTime(millis: Long): String
 
 data class TogglProject(val id: Long, val name: String, val workspaceId: Long)
 
+/** A project offered when a session asks before starting, and whether it takes a description. */
+data class TogglChoice(val project: TogglProject, val withDescription: Boolean = true)
+
 /** [retryAfterMs]: worth trying again after that long (no network, Toggl's hourly limit). */
 class TogglException(message: String, val retryAfterMs: Long? = null) : Exception(message)
 
@@ -86,6 +89,21 @@ class Toggl(private val token: String, private val http: Http = ::httpRequest) {
                 workspaceId = o["workspace_id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null,
             )
         }.sortedBy { it.name.lowercase() }
+    }
+
+    /** Creates an active project [name] in [workspace]. */
+    suspend fun createProject(workspace: Long, name: String): TogglProject {
+        val entry = buildJsonObject {
+            put("name", name.trim())
+            put("active", true)
+        }
+        val body = call("POST", "workspaces/$workspace/projects", entry.toString())
+        val o = Json.parseToJsonElement(body).jsonObject
+        return TogglProject(
+            id = o["id"]?.jsonPrimitive?.longOrNull ?: throw TogglException("Toggl hat kein Projekt angelegt"),
+            name = o["name"]?.jsonPrimitive?.contentOrNull ?: name.trim(),
+            workspaceId = o["workspace_id"]?.jsonPrimitive?.longOrNull ?: workspace,
+        )
     }
 
     /** Creates an entry from [start]; without [stop] it runs on in Toggl. Returns its id. */
@@ -339,9 +357,19 @@ class TogglTracker(
         chosen[session.id] = description?.let { it to project } to wallClockMillis()
     }
 
+    /** Last description booked for [projectId] in [sessionName]. */
+    fun projectDescription(sessionName: String, projectId: Long): String =
+        settings.lastProjectDescription(sessionName, projectId)
+            ?: settings.lastEntry(sessionName)?.takeIf { it.second?.id == projectId }?.first.orEmpty()
+
     /** Description and project offered for a run of [s] that asks for them: as last time for this session. */
     fun suggestion(s: Session): Pair<String, TogglProject?> {
         val last = settings.lastEntry(s.name)
+        if (s.togglChoices.isNotEmpty()) {
+            val choice = s.togglChoices.firstOrNull { it.project.id == last?.second?.id } ?: s.togglChoices.first()
+            val description = if (choice.withDescription) projectDescription(s.name, choice.project.id) else ""
+            return description to choice.project
+        }
         val description = if (s.togglAskDescription) last?.first ?: s.togglName else s.togglName
         val project = if (s.togglAskProject && last != null) last.second else s.togglProject
         return description to project
@@ -465,6 +493,20 @@ class TogglTracker(
         val token = settings.togglToken ?: return emptyList()
         projectCache?.let { (at, list) -> if (wallClockMillis() - at < 10 * 60_000) return list }
         return client(token).projects().also { projectCache = wallClockMillis() to it }
+    }
+
+    /** Creates a new project in the default workspace (or returns an existing one with the same name). */
+    suspend fun createProject(name: String): TogglProject {
+        val trimmed = name.trim()
+        val existing = projects().firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
+        if (existing != null) return existing
+        val token = settings.togglToken ?: throw TogglException("Kein Toggl-Token eingetragen")
+        val toggl = client(token)
+        val workspace = settings.togglWorkspace ?: toggl.defaultWorkspace().also { settings.togglWorkspace = it }
+        val created = toggl.createProject(workspace, trimmed)
+        val updated = (projectCache?.second.orEmpty() + created).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+        projectCache = wallClockMillis() to updated
+        return created
     }
 
     /** Waits for every request so far (tests). */
@@ -592,6 +634,11 @@ class SettingsStore(private val storage: SessionStorage) {
         return description to o["project"]?.let(::readProject)
     }
 
+    /** Last non-blank description booked for [projectId] in [sessionName]. */
+    fun lastProjectDescription(sessionName: String, projectId: Long): String? =
+        read()["togglLast"]?.jsonObject?.get(sessionName)?.jsonObject
+            ?.get("byProject")?.jsonObject?.get(projectId.toString())?.jsonPrimitive?.contentOrNull
+
     /** What each Wassertiger still owes Toggl, by its [TogglTracker]'s name: when it last said so, and the runs. */
     fun togglPending(): Map<String, Pair<Long, List<TogglRun>>> =
         (read()["togglPending"] as? JsonObject).orEmpty().mapNotNull { (owner, element) ->
@@ -615,9 +662,15 @@ class SettingsStore(private val storage: SessionStorage) {
 
     fun rememberEntry(sessionName: String, description: String, project: TogglProject?) = write {
         val last = (this["togglLast"] as? JsonObject).orEmpty().toMutableMap()
+        val prev = last[sessionName] as? JsonObject
+        val byProject = (prev?.get("byProject") as? JsonObject).orEmpty().toMutableMap()
+        if (project != null && description.isNotBlank()) {
+            byProject[project.id.toString()] = JsonPrimitive(description)
+        }
         last[sessionName] = buildJsonObject {
             put("description", description)
             project?.let { put("project", writeProject(it)) }
+            if (byProject.isNotEmpty()) put("byProject", JsonObject(byProject))
         }
         put("togglLast", JsonObject(last))
     }

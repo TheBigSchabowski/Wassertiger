@@ -216,6 +216,7 @@ fun WassertigerApp(
                     isNew = sessions.none { it.id == edit.id },
                     togglConnected = togglToken != null,
                     loadProjects = toggl::projects,
+                    createProject = toggl::createProject,
                     insertable = sessions.filter { it.music == edit.music && it.id != edit.id && !it.archived }.sortedBy { it.template } +
                         (if (edit.music) musicPresets() else presets()).filter { p -> sessions.none { it.name == p.name } },
                     onPreviewChime = onPreviewChime,
@@ -623,6 +624,8 @@ private fun EditorScreen(
     togglConnected: Boolean,
     /** The Toggl projects for the project menu. */
     loadProjects: suspend () -> List<TogglProject>,
+    /** Creates a new Toggl project in the default workspace. */
+    createProject: suspend (String) -> TogglProject = { throw TogglException("Nicht verbunden") },
     /** Sessions of the same kind that can go in as one interval ("Session einfügen"). */
     insertable: List<Session>,
     onPreviewChime: (Chime, Boolean) -> Unit,
@@ -646,6 +649,7 @@ private fun EditorScreen(
     var togglProject by remember { mutableStateOf(initial.togglProject) }
     /** Project and description picked before every start instead of fixed. */
     var togglAsk by remember { mutableStateOf(initial.togglAsks) }
+    var togglChoices by remember { mutableStateOf(initial.togglChoices) }
     var togglPauseStops by remember { mutableStateOf(initial.togglPauseStops) }
     var hexText by remember { mutableStateOf(formatHexColor(initial.flashColor)) }
     val music = initial.music
@@ -714,6 +718,7 @@ private fun EditorScreen(
         togglAskDescription = togglAsk,
         togglProject = togglProject,
         togglAskProject = togglAsk,
+        togglChoices = togglChoices,
         togglPauseStops = togglPauseStops,
     )
     fun edited() = if (stopwatch) edits().copy(steps = stopwatchSteps(signalEvery!!), rounds = ENDLESS, signalEvery = signalEvery) else edits()
@@ -1023,7 +1028,7 @@ private fun EditorScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 itemVerticalAlignment = Alignment.CenterVertically,
                             ) {
-                                TogglProjectMenu(togglProject, loadProjects) { togglProject = it }
+                                TogglProjectMenu(togglProject, loadProjects, createProject = createProject) { togglProject = it }
                                 OutlinedTextField(
                                     value = togglDescription,
                                     onValueChange = { togglDescription = it },
@@ -1033,6 +1038,8 @@ private fun EditorScreen(
                                     modifier = Modifier.widthIn(min = 180.dp, max = 320.dp),
                                 )
                             }
+                        } else {
+                            TogglChoicesEditor(togglChoices, loadProjects, createProject) { togglChoices = it }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                             Switch(checked = togglPauseStops, onCheckedChange = { togglPauseStops = it })
@@ -1074,7 +1081,13 @@ private fun EditorScreen(
                             buildString {
                                 append(
                                     if (togglAsk) {
-                                        "Beim Start fragt die App, was du machst – Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
+                                        if (togglChoices.isEmpty()) {
+                                            "Beim Start fragt die App, was du machst – Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
+                                        } else {
+                                            "Beim Start zur Auswahl: " + togglChoices.joinToString(", ") {
+                                                "${it.project.name} (${if (it.withDescription) "mit" else "ohne"} Beschreibung)"
+                                            } + "."
+                                        }
                                     } else {
                                         "Wird automatisch erfasst als „" + listOfNotNull(
                                             togglDescription.trim().ifBlank { if (togglProject != null) null else name.trim() },
@@ -1407,6 +1420,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                     )
                     TogglForm(
                         tracker, t.description, t.project, "Übernehmen",
+                        choices = run.session.togglChoices,
+                        sessionName = run.session.name,
                         skip = "Diesmal nicht erfassen" to { tracker.setTracked(run.id, false) },
                     ) { d, p -> tracker.edit(run.id, d, p) }
                 }
@@ -1430,6 +1445,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
             t.error?.let { TogglError(it) { tracker.retry(run.id) } }
             if (editing) TogglForm(
                 tracker, t.description, t.project, "Übernehmen",
+                choices = run.session.togglChoices,
+                sessionName = run.session.name,
                 skip = "Diesmal nicht erfassen" to {
                     tracker.setTracked(run.id, false)
                     editing = false
@@ -1458,7 +1475,11 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                     "Nicht erfasst · ${formatDuration((millis / 1000).toInt())} · ${clockTime(end - millis)}–${clockTime(end)}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                TogglForm(tracker, last?.first ?: run.session.name, last?.second, "Eintragen") { d, p -> tracker.book(run, d, p) }
+                TogglForm(
+                    tracker, last?.first ?: run.session.name, last?.second, "Eintragen",
+                    choices = run.session.togglChoices,
+                    sessionName = run.session.name,
+                ) { d, p -> tracker.book(run, d, p) }
                 return@Column
             }
             if (t.waiting && !t.deleted) {
@@ -1468,6 +1489,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 )
                 if (t.segments.isNotEmpty()) TogglForm(
                     tracker, t.description, t.project, "Eintragen",
+                    choices = run.session.togglChoices,
+                    sessionName = run.session.name,
                     skip = "Nicht eintragen" to { tracker.setTracked(run.id, false) },
                 ) { d, p -> tracker.edit(run.id, d, p) }
                 return@Column
@@ -1494,7 +1517,11 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 else -> Text("Wird übertragen …", style = MaterialTheme.typography.bodySmall)
             }
             if (editing) {
-                TogglForm(tracker, t.description, t.project, "Übernehmen") { d, p ->
+                TogglForm(
+                    tracker, t.description, t.project, "Übernehmen",
+                    choices = run.session.togglChoices,
+                    sessionName = run.session.name,
+                ) { d, p ->
                     tracker.edit(run.id, d, p)
                     editing = false
                 }
@@ -1523,6 +1550,8 @@ private fun TogglStartDialog(session: Session, tracker: TogglTracker, onDismiss:
         text = {
             TogglForm(
                 tracker, description, project, "Starten",
+                choices = session.togglChoices,
+                sessionName = session.name,
                 skip = "Ohne Toggl starten" to { onStart(null, null) },
             ) { d, p -> onStart(d, p) }
         },
@@ -1552,35 +1581,244 @@ private fun TogglForm(
     initialDescription: String,
     initialProject: TogglProject?,
     action: String,
+    /** Restricts offered projects and per-project description prompts; empty = any project with description. */
+    choices: List<TogglChoice> = emptyList(),
+    sessionName: String? = null,
     /** A second, quieter button: its label and what it does ("Diesmal nicht erfassen"). */
     skip: Pair<String, () -> Unit>? = null,
     onDone: (String, TogglProject?) -> Unit,
 ) {
-    var description by remember { mutableStateOf(initialDescription) }
-    var project by remember { mutableStateOf(initialProject) }
+    val startProject = if (choices.isEmpty()) initialProject else initialProject?.takeIf { p -> choices.any { it.project.id == p.id } } ?: choices.first().project
+    var project by remember { mutableStateOf(startProject) }
+    val startDescription = when {
+        choices.isEmpty() -> initialDescription
+        !(choices.firstOrNull { it.project.id == startProject?.id } ?: choices.first()).withDescription -> ""
+        initialProject?.id == startProject?.id -> initialDescription
+        else -> sessionName?.let { startProject?.id?.let { pid -> tracker.projectDescription(it, pid) } }.orEmpty()
+    }
+    var description by remember { mutableStateOf(startDescription) }
+    val typed = remember {
+        mutableMapOf<Long, String>().apply {
+            if (startProject != null && startDescription.isNotBlank()) put(startProject.id, startDescription)
+        }
+    }
+    val activeChoice = if (choices.isEmpty()) null else choices.firstOrNull { it.project.id == project?.id } ?: choices.first()
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TogglProjectMenu(project, tracker::projects) { project = it }
-        OutlinedTextField(
-            value = description,
-            onValueChange = { description = it },
-            label = { Text("Beschreibung") },
-            // With a project, none is fine: "Musik" alone.
-            placeholder = if (project != null) ({ Text("ohne") }) else null,
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (choices.isEmpty()) {
+            TogglProjectMenu(project, tracker::projects, createProject = tracker::createProject) { project = it }
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                label = { Text("Beschreibung") },
+                // With a project, none is fine: "Musik" alone.
+                placeholder = if (project != null) ({ Text("ohne") }) else null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                choices.forEach { choice ->
+                    FilterChip(
+                        selected = activeChoice?.project?.id == choice.project.id,
+                        onClick = {
+                            project = choice.project
+                            description = if (choice.withDescription) {
+                                typed[choice.project.id] ?: sessionName?.let { tracker.projectDescription(it, choice.project.id) }.orEmpty()
+                            } else ""
+                        },
+                        label = { Text(choice.project.name) },
+                    )
+                }
+            }
+            if (activeChoice?.withDescription == true) {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = {
+                        description = it
+                        typed[activeChoice.project.id] = it
+                    },
+                    label = { Text("Beschreibung") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Text("Ohne Beschreibung", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        val canSubmit = when {
+            activeChoice == null -> description.isNotBlank() || project != null
+            activeChoice.withDescription -> description.isNotBlank()
+            else -> true
+        }
+        val submitProject = activeChoice?.project ?: project
+        val submitDescription = if (activeChoice != null && !activeChoice.withDescription) "" else description.trim()
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-            Button(enabled = description.isNotBlank() || project != null, onClick = { onDone(description.trim(), project) }) { Text(action) }
+            Button(enabled = canSubmit, onClick = { onDone(submitDescription, submitProject) }) { Text(action) }
             skip?.let { (label, onSkip) -> TextButton(onClick = onSkip) { Text(label) } }
         }
     }
 }
 
-/** "Projekt: Musik" opening the Toggl projects, fetched when it first opens. */
+/** Configures which Toggl projects a session offers before starting and whether each takes a description. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TogglProjectMenu(project: TogglProject?, load: suspend () -> List<TogglProject>, enabled: Boolean = true, onPick: (TogglProject?) -> Unit) {
+private fun TogglChoicesEditor(
+    choices: List<TogglChoice>,
+    loadProjects: suspend () -> List<TogglProject>,
+    createProject: suspend (String) -> TogglProject,
+    onChange: (List<TogglChoice>) -> Unit,
+) {
     var projects by remember { mutableStateOf<List<TogglProject>?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
+    var newOpen by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(menuOpen) {
+        if (menuOpen && projects == null) {
+            try {
+                projects = loadProjects()
+            } catch (e: TogglException) {
+                error = e.message
+                projects = emptyList()
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            if (choices.isEmpty()) "Alle Projekte stehen zur Auswahl – oder wähle hier nur die Projekte aus, die du für diese Session brauchst:"
+            else "Projekte zur Auswahl",
+            style = if (choices.isEmpty()) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelLarge,
+            color = if (choices.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+        )
+        choices.forEach { choice ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(choice.project.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = choice.withDescription,
+                    onClick = { onChange(choices.map { if (it.project.id == choice.project.id) it.copy(withDescription = true) else it }) },
+                    label = { Text("mit Beschreibung") },
+                )
+                FilterChip(
+                    selected = !choice.withDescription,
+                    onClick = { onChange(choices.map { if (it.project.id == choice.project.id) it.copy(withDescription = false) else it }) },
+                    label = { Text("ohne Beschreibung") },
+                )
+                TextButton(onClick = { onChange(choices.filterNot { it.project.id == choice.project.id }) }) { Text("✕") }
+            }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                OutlinedButton(onClick = { menuOpen = true }) { Text("+ Projekt zur Auswahl") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    val available = projects.orEmpty().filter { p -> choices.none { it.project.id == p.id } }
+                    available.forEach { p ->
+                        DropdownMenuItem(text = { Text(p.name) }, onClick = {
+                            onChange(choices + TogglChoice(p, withDescription = true))
+                            menuOpen = false
+                        })
+                    }
+                    when {
+                        projects == null -> DropdownMenuItem(text = { Text("Projekte laden …") }, onClick = {}, enabled = false)
+                        available.isEmpty() -> DropdownMenuItem(text = { Text("Keine weiteren Projekte") }, onClick = {}, enabled = false)
+                    }
+                }
+            }
+            OutlinedButton(onClick = { newOpen = true }) { Text("+ Neues Projekt …") }
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
+    if (newOpen) {
+        NewProjectDialog(
+            askWithDescription = true,
+            createProject = createProject,
+            onDismiss = { newOpen = false },
+            onCreated = { created, withDescription ->
+                projects = (projects.orEmpty() + created).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+                if (choices.none { it.project.id == created.id }) {
+                    onChange(choices + TogglChoice(created, withDescription))
+                }
+                newOpen = false
+            },
+        )
+    }
+}
+
+/** Dialog to create a new Toggl project in the user's default workspace. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NewProjectDialog(
+    askWithDescription: Boolean,
+    createProject: suspend (String) -> TogglProject,
+    onDismiss: () -> Unit,
+    onCreated: (TogglProject, Boolean) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var withDescription by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Neues Toggl-Projekt") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        error = null
+                    },
+                    label = { Text("Projektname") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (askWithDescription) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = withDescription, onClick = { withDescription = true }, label = { Text("mit Beschreibung") })
+                        FilterChip(selected = !withDescription, onClick = { withDescription = false }, label = { Text("ohne Beschreibung") })
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = name.isNotBlank() && !busy,
+                onClick = {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            val created = createProject(name.trim())
+                            onCreated(created, withDescription)
+                        } catch (e: TogglException) {
+                            error = e.message
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+            ) { Text(if (busy) "Lege an …" else "Anlegen") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Abbrechen") }
+        },
+    )
+}
+
+/** "Projekt: Musik" opening the Toggl projects, fetched when it first opens. */
+@Composable
+fun TogglProjectMenu(
+    project: TogglProject?,
+    load: suspend () -> List<TogglProject>,
+    enabled: Boolean = true,
+    createProject: (suspend (String) -> TogglProject)? = null,
+    onPick: (TogglProject?) -> Unit,
+) {
+    var projects by remember { mutableStateOf<List<TogglProject>?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var newOpen by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(menuOpen) {
         if (menuOpen && projects == null) {
@@ -1604,9 +1842,27 @@ fun TogglProjectMenu(project: TogglProject?, load: suspend () -> List<TogglProje
                     })
                 }
                 if (projects == null) DropdownMenuItem(text = { Text("Projekte laden …") }, onClick = {}, enabled = false)
+                if (createProject != null) {
+                    DropdownMenuItem(text = { Text("+ Neues Projekt …") }, onClick = {
+                        menuOpen = false
+                        newOpen = true
+                    })
+                }
             }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
+    if (newOpen && createProject != null) {
+        NewProjectDialog(
+            askWithDescription = false,
+            createProject = createProject,
+            onDismiss = { newOpen = false },
+            onCreated = { created, _ ->
+                projects = (projects.orEmpty() + created).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+                onPick(created)
+                newOpen = false
+            },
+        )
     }
 }
 

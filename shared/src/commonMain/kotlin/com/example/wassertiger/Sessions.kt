@@ -82,6 +82,11 @@ data class Session(
     /** Asks for the project at every run instead of using [togglProject]. */
     val togglAskProject: Boolean = false,
     /**
+     * Projects offered when [togglAsks] is true, and whether each one asks for a description;
+     * empty = all Toggl projects are offered with a description field.
+     */
+    val togglChoices: List<TogglChoice> = emptyList(),
+    /**
      * The pause button pauses Toggl too (ends the entry, Weiter starts a new one); off (the default):
      * Toggl counts on, so the whole session stays one block.
      */
@@ -364,6 +369,7 @@ class SessionStore(private val storage: SessionStorage) {
             togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
             togglProject = o["togglProject"]?.let { readProject(it) },
             togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
+            togglChoices = o["togglChoices"]?.jsonArray?.mapNotNull(::readChoice).orEmpty(),
             // "togglPauseStops" (before 1.10.0) was true for nearly everyone as the old default: not carried over.
             togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
             stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
@@ -393,6 +399,9 @@ class SessionStore(private val storage: SessionStorage) {
                     put("togglAskDescription", session.togglAskDescription)
                     session.togglProject?.let { put("togglProject", writeProject(it)) }
                     put("togglAskProject", session.togglAskProject)
+                    if (session.togglChoices.isNotEmpty()) {
+                        put("togglChoices", buildJsonArray { session.togglChoices.forEach { add(writeChoice(it)) } })
+                    }
                     put("togglPauseSplits", session.togglPauseStops)
                     if (session.stopwatch) {
                         put("stopwatch", true)
@@ -456,4 +465,16 @@ fun readProject(element: JsonElement): TogglProject? {
         name = p["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         workspaceId = p["workspace"]?.jsonPrimitive?.longOrNull ?: return null,
     )
+}
+
+fun writeChoice(c: TogglChoice): JsonObject = buildJsonObject {
+    put("project", writeProject(c.project))
+    put("withDescription", c.withDescription)
+}
+
+fun readChoice(element: JsonElement): TogglChoice? {
+    val o = element as? JsonObject ?: return null
+    val project = o["project"]?.let(::readProject) ?: return null
+    val withDescription = o["withDescription"]?.jsonPrimitive?.boolean ?: true
+    return TogglChoice(project, withDescription)
 }

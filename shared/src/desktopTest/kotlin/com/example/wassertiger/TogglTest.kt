@@ -22,11 +22,13 @@ class TogglTest {
     /** One running timer at most: starting one stops the other, as in Toggl. */
     private class FakeToggl {
         val entries = mutableMapOf<Long, Entry>()
+        val projects = mutableListOf<TogglProject>()
         val calls = mutableListOf<String>()
         var offline = false
         /** Toggl's hourly limit of the free plan, which hits the account (/me) endpoints. */
         var meLimited = false
         private var nextId = 100L
+        private var nextProjectId = 200L
 
         val running: Entry? get() = entries.values.firstOrNull { it.stop == null }
 
@@ -39,6 +41,17 @@ class TogglTest {
                 meLimited && path.startsWith("me") ->
                     HttpResult(402, "You have hit your hourly limit for API calls. Your quota will reset in 1190 seconds.")
                 path == "me" -> HttpResult(200, """{"fullname":"Test","default_workspace_id":7}""")
+                path == "me/projects" -> HttpResult(
+                    200,
+                    projects.joinToString(",", "[", "]") {
+                        """{"id":${it.id},"name":${JsonPrimitive(it.name)},"workspace_id":${it.workspaceId},"active":true}"""
+                    },
+                )
+                method == "POST" && path == "workspaces/7/projects" -> {
+                    val p = TogglProject(nextProjectId++, o!!.getValue("name").jsonPrimitive.content, 7)
+                    projects += p
+                    HttpResult(200, """{"id":${p.id},"name":${JsonPrimitive(p.name)},"workspace_id":${p.workspaceId}}""")
+                }
                 path == "me/time_entries/current" -> HttpResult(200, running?.let { """{"id":${it.id}}""" } ?: "null")
                 // Like Toggl: start + duration must land exactly on stop.
                 method == "POST" && o!!["stop"] != null && java.time.Instant.parse(o.getValue("start").jsonPrimitive.content)
@@ -514,6 +527,54 @@ class TogglTest {
         toggl.idle()
         assertTrue(toggl.runs.value.getValue(26).deleted)
         assertEquals(1, server.entries.size)
+    }
+
+    @Test
+    fun configuredProjectChoicesWithAndWithoutDescription() = runBlocking {
+        val musik = TogglProject(1, "Musik", 7)
+        val schach = TogglProject(2, "Schach", 7)
+        val mauro = TogglProject(3, "Mauro", 7)
+        val arbeit = TogglProject(4, "Arbeit", 7)
+        val choices = listOf(
+            TogglChoice(musik, withDescription = true),
+            TogglChoice(schach, withDescription = true),
+            TogglChoice(mauro, withDescription = false),
+            TogglChoice(arbeit, withDescription = false),
+        )
+        var sessionsJson: String? = null
+        val store = SessionStore(object : SessionStorage {
+            override fun read() = sessionsJson
+            override fun write(json: String) { sessionsJson = json }
+        })
+        val pomodoro = preset(1).copy(togglChoices = choices)
+        store.save(listOf(pomodoro))
+        assertEquals(choices, store.load().single().togglChoices)
+
+        val toggl = tracker(this)
+        assertEquals("" to musik, toggl.suggestion(pomodoro))
+
+        toggl.choose(pomodoro, "Gitarre", musik)
+        toggl.choose(pomodoro, "Taktik", schach)
+        toggl.choose(pomodoro, "", mauro)
+
+        // Mauro has no description and is offered as last chosen, while Musik & Schach keep theirs.
+        assertEquals("" to mauro, toggl.suggestion(pomodoro))
+        assertEquals("Gitarre", toggl.projectDescription(pomodoro.name, musik.id))
+        assertEquals("Taktik", toggl.projectDescription(pomodoro.name, schach.id))
+    }
+
+    @Test
+    fun createProjectAddsNewAndReusesExisting() = runBlocking {
+        val toggl = tracker(this)
+        val created = toggl.createProject("Arbeit")
+        assertEquals("Arbeit", created.name)
+        assertEquals(7L, created.workspaceId)
+        assertEquals(listOf(created), toggl.projects())
+
+        val callsBefore = server.calls.size
+        val same = toggl.createProject("arbeit")
+        assertEquals(created, same)
+        assertEquals(callsBefore, server.calls.size, "cached project reused without extra POST")
     }
 }
 
