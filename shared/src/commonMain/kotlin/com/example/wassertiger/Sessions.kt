@@ -93,6 +93,8 @@ data class Session(
     val stopwatch: Boolean = false,
     /** A stopwatch lights up / buzzes every this many seconds; 0 = never, a plain stopwatch. */
     val signalEvery: Int = 0,
+    /** Optionale Zuordnung zu einer Quest/einem Projekt aus [TaskStore] für Kalender & Wochenauswertung. */
+    val questId: String? = null,
 ) {
     /** Whether interval changes signal: a stopwatch without [signalEvery] never does. */
     val signals: Boolean get() = !stopwatch || signalEvery > 0
@@ -366,6 +368,7 @@ class SessionStore(private val storage: SessionStorage) {
             togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
             stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
             signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
+            questId = o["questId"]?.jsonPrimitive?.contentOrNull,
         ).also { require(it.steps.isNotEmpty() && it.steps.all { s -> s.seconds > 0 }) }
     }
 
@@ -395,6 +398,7 @@ class SessionStore(private val storage: SessionStorage) {
                         put("stopwatch", true)
                         put("signalEvery", session.signalEvery)
                     }
+                    session.questId?.let { put("questId", it) }
                     put("steps", writeSteps(session.steps))
                 })
             }

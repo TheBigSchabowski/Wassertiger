@@ -65,7 +65,8 @@ class TimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val session = intent.getStringExtra(EXTRA_SESSION_ID)?.let { sessionStore(this).get(it) }
+                val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+                val session = sessionId?.let { sessionStore(this).get(it) ?: taskStore(this).focusSession(it) }
                 if (session == null || session.steps.isEmpty()) stopSelf() else start(session)
             }
             ACTION_PRACTICE -> start(
@@ -113,7 +114,11 @@ class TimerService : Service() {
     }
 
     private fun onTimerEvent(event: TimerEvent, state: RunState) {
-        togglTracker(this).onEvent(event, state)
+        val tracker = togglTracker(this)
+        tracker.onEvent(event, state)
+        val togglRun = tracker.runs.value[state.id]
+        val togglSynced = settingsStore(this).togglToken != null && togglRun != null && !togglRun.deleted && !togglRun.waiting
+        taskStore(this).onTimerEvent(event, state, togglSynced = togglSynced)
         // One drone at a time: the oldest music session still going plays.
         music.follow(engine.active.firstOrNull { it.session.music })
         when (event) {

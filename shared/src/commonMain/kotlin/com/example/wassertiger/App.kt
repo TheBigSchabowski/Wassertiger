@@ -92,6 +92,20 @@ val DoneGreen = Color(0xFF000000 or DONE_GREEN_RGB.toLong())
 @Composable
 expect fun PlatformBackHandler(onBack: () -> Unit)
 
+/** Plattformübergreifende Dateiaktionen für JSON-Export und Multi-JSON-Import. */
+class JsonFileActions(
+    val canPickFiles: Boolean,
+    val exportJson: (defaultFileName: String, content: String) -> Unit,
+    val importJsons: () -> Unit,
+)
+
+/** Stellt einen nativen Datei-Dialog bzw. Android-Storage-Picker für JSON-Export und -Zusammenführung bereit. */
+@Composable
+expect fun rememberJsonFileActions(
+    onImported: (List<String>) -> Unit,
+    onStatus: (String) -> Unit,
+): JsonFileActions
+
 @Composable
 fun WassertigerTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(primary = Amber, onPrimary = Color.Black)) {
@@ -100,8 +114,8 @@ fun WassertigerTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * Two pages side by side: the silent timer and, one swipe (or → key) to the right, music sessions
- * with drone and drums.
+ * Four pages side by side: silent timer, music sessions with drone and drums, dedicated focus view,
+ * and tasks/weeks/quests/calendar/review.
  *
  * While sessions run, their countdowns fill the screen; "+ Parallel" goes back to the list to start
  * one more beside them.
@@ -111,6 +125,7 @@ fun WassertigerTheme(content: @Composable () -> Unit) {
  * @param runHint explains how the platform signals a step change of the session.
  * @param onPreviewChime plays a chime when it is picked in the editor (finish: the end-of-run triad).
  * @param header platform-specific notices above the session list.
+ * @param tasks holds quests, weekly tasks, subtasks, and the local calendar.
  */
 @Composable
 fun WassertigerApp(
@@ -122,16 +137,25 @@ fun WassertigerApp(
     runHint: (Session) -> String,
     onPreviewChime: (chime: Chime, finish: Boolean) -> Unit = { _, _ -> },
     header: @Composable () -> Unit = {},
+    tasks: TaskStore = remember {
+        TaskStore(object : SessionStorage {
+            override fun read(): String? = null
+            override fun write(json: String) {}
+        })
+    },
 ) {
     val runs by engine.runs.collectAsState()
+    val taskSnapshot by tasks.state.collectAsState()
+    val questsById = remember(taskSnapshot.quests) { taskSnapshot.quests.associateBy { it.id } }
     var sessions by remember { mutableStateOf(store.load()) }
     var editing by remember { mutableStateOf<Session?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var focusTarget by remember { mutableStateOf<FocusTarget>(FocusTarget.Free) }
     /** Sessions run, and the list is up to start one more beside them. */
     var picking by remember { mutableStateOf(false) }
     LaunchedEffect(runs.isEmpty()) { if (runs.isEmpty()) picking = false }
     var togglToken by remember { mutableStateOf(settings.togglToken) }
-    val pager = rememberPagerState(pageCount = { 2 })
+    val pager = rememberPagerState(pageCount = { 4 })
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
     val onList = (runs.isEmpty() || picking) && editing == null && !settingsOpen
@@ -166,27 +190,35 @@ fun WassertigerApp(
             },
         ) { leaving = null }
     }
-    // Key events need a focused node; the lists have no text fields, so the whole page takes focus.
-    LaunchedEffect(onList) { if (onList) runCatching { focus.requestFocus() } }
+    // Key events need a focused node; Timer/Musik have no text fields, so the whole page takes focus.
+    LaunchedEffect(onList, pager.currentPage) {
+        if (onList && pager.currentPage < 2) runCatching { focus.requestFocus() }
+    }
 
     Box(
         Modifier.fillMaxSize().safeDrawingPadding()
             .focusRequester(focus)
             .focusable()
             .onPreviewKeyEvent { e ->
+                // On "Fokus" (2) and "Aufgaben" (3) text fields need Left/Right keys for cursor movement.
                 val page = when {
-                    !onList || e.type != KeyEventType.KeyDown -> null
-                    e.key == Key.DirectionRight -> 1
-                    e.key == Key.DirectionLeft -> 0
+                    !onList || e.type != KeyEventType.KeyDown || pager.currentPage >= 2 -> null
+                    e.key == Key.DirectionRight -> (pager.currentPage + 1).coerceAtMost(3)
+                    e.key == Key.DirectionLeft -> (pager.currentPage - 1).coerceAtLeast(0)
                     else -> null
                 }
-                if (page != null) scope.launch { pager.animateScrollToPage(page) }
-                page != null
+                if (page != null && page != pager.currentPage) {
+                    scope.launch { pager.animateScrollToPage(page) }
+                    true
+                } else {
+                    false
+                }
             },
         contentAlignment = Alignment.TopCenter,
     ) {
         val edit = editing
-        Box(Modifier.widthIn(max = 720.dp)) {
+        val wideTasks = onList && pager.currentPage == 3
+        Box(Modifier.widthIn(max = if (wideTasks) 1080.dp else 720.dp)) {
             when {
                 settingsOpen -> SettingsScreen(settings) {
                     togglToken = settings.togglToken
@@ -197,6 +229,7 @@ fun WassertigerApp(
                     isNew = sessions.none { it.id == edit.id },
                     togglConnected = togglToken != null,
                     loadProjects = toggl::projects,
+                    quests = taskSnapshot.quests,
                     insertable = sessions.filter { it.music == edit.music && it.id != edit.id }.sortedBy { it.template } +
                         (if (edit.music) musicPresets() else presets()).filter { p -> sessions.none { it.name == p.name } },
                     onPreviewChime = onPreviewChime,
@@ -230,7 +263,10 @@ fun WassertigerApp(
                         if (togglToken != null && t != null && t.waiting && !t.deleted && t.segments.isNotEmpty()) leaving = run
                         else engine.dismiss(run.id)
                     },
-                    runExtra = { run -> togglToken?.let { TogglPanel(run, it, toggl, settings) } },
+                    runExtra = { run ->
+                        FocusRunSubtasks(run, tasks)
+                        togglToken?.let { TogglPanel(run, it, toggl, settings) }
+                    },
                 )
                 else -> Column {
                     if (picking) PlatformBackHandler { picking = false }
@@ -245,34 +281,80 @@ fun WassertigerApp(
                         }
                     }
                     PrimaryTabRow(selectedTabIndex = pager.currentPage) {
-                        listOf("Timer", "Musik").forEachIndexed { i, title ->
+                        listOf("Timer", "Musik", "Fokus", "Aufgaben").forEachIndexed { i, title ->
                             Tab(
                                 selected = pager.currentPage == i,
                                 onClick = { scope.launch { pager.animateScrollToPage(i) } },
-                                text = { Text(title) },
-                            )
+                                modifier = Modifier.height(48.dp),
+                            ) {
+                                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, softWrap = false)
+                            }
                         }
                     }
                     HorizontalPager(pager, Modifier.weight(1f)) { page ->
-                        val music = page == 1
-                        ListScreen(
-                            music = music,
-                            sessions = sessions.filter { !it.template && it.music == music },
-                            templates = sessions.filter { it.template && it.music == music },
-                            header = {
-                                if (picking && runs.isNotEmpty()) RunningBanner(runs) { picking = false }
-                                header()
-                            },
-                            onStart = start,
-                            onEdit = { editing = it },
-                            onNew = {
-                                editing = it?.newSession() ?: if (music) {
-                                    Session(name = "Neue Übung", music = true, steps = listOf(Step(5 * 60, drone = 9)))
-                                } else {
-                                    Session(name = "Neue Session", steps = listOf(Step(30)))
-                                }
-                            },
-                        )
+                        val availableFocusSessions = remember(sessions) {
+                            sessions.filter { !it.template } + presets()
+                        }
+                        when (page) {
+                            2 -> FocusTabScreen(
+                                target = focusTarget,
+                                onSelectTarget = { focusTarget = it },
+                                taskStore = tasks,
+                                availableSessions = availableFocusSessions,
+                                engine = engine,
+                                togglConnected = togglToken != null,
+                                onStartFocus = { session, taskId, questId ->
+                                    tasks.registerFocusSession(session, taskId, questId)
+                                    // Bleibe im Fokus-Reiter, damit Uhr, Unteraufgaben & Signale sichtbar bleiben.
+                                    picking = true
+                                    onStart(session)
+                                },
+                                onPreviewChime = onPreviewChime,
+                                header = {
+                                    if (picking && runs.isNotEmpty()) RunningBanner(runs) { picking = false }
+                                    header()
+                                },
+                            )
+                            3 -> TasksScreen(
+                                taskStore = tasks,
+                                availableSessions = availableFocusSessions,
+                                engine = engine,
+                                toggl = toggl,
+                                togglConnected = togglToken != null,
+                                onOpenFocus = { target ->
+                                    focusTarget = target
+                                    scope.launch { pager.animateScrollToPage(2) }
+                                },
+                                onOpenRunningScreen = { picking = false },
+                                onPreviewChime = onPreviewChime,
+                                header = {
+                                    if (picking && runs.isNotEmpty()) RunningBanner(runs) { picking = false }
+                                    header()
+                                },
+                            )
+                            else -> {
+                                val music = page == 1
+                                ListScreen(
+                                    music = music,
+                                    sessions = sessions.filter { !it.template && it.music == music },
+                                    templates = sessions.filter { it.template && it.music == music },
+                                    questsById = questsById,
+                                    header = {
+                                        if (picking && runs.isNotEmpty()) RunningBanner(runs) { picking = false }
+                                        header()
+                                    },
+                                    onStart = start,
+                                    onEdit = { editing = it },
+                                    onNew = {
+                                        editing = it?.newSession() ?: if (music) {
+                                            Session(name = "Neue Übung", music = true, steps = listOf(Step(5 * 60, drone = 9)))
+                                        } else {
+                                            Session(name = "Neue Session", steps = listOf(Step(30)))
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -341,6 +423,7 @@ private fun ListScreen(
     music: Boolean,
     sessions: List<Session>,
     templates: List<Session>,
+    questsById: Map<String, QuestProject> = emptyMap(),
     header: @Composable () -> Unit,
     onStart: (Session) -> Unit,
     onEdit: (Session) -> Unit,
@@ -362,7 +445,7 @@ private fun ListScreen(
             }
         }
         itemsIndexed(sessions, key = { _, s -> s.id }) { _, session ->
-            SessionCard(session, onEdit) {
+            SessionCard(session, questsById[session.questId], onEdit) {
                 Button(onClick = { onStart(session) }) { Text("Start") }
             }
         }
@@ -394,7 +477,7 @@ private fun ListScreen(
         if (templates.isNotEmpty()) {
             item { Text("Meine Vorlagen", style = MaterialTheme.typography.labelLarge) }
             itemsIndexed(templates, key = { _, s -> s.id }) { _, template ->
-                SessionCard(template, onEdit) {
+                SessionCard(template, questsById[template.questId], onEdit) {
                     FilledTonalButton(onClick = { onNew(template) }) { Text("Neu daraus") }
                 }
             }
@@ -405,7 +488,12 @@ private fun ListScreen(
 
 /** Tapping the card edits [session]; [action] sits on the right. */
 @Composable
-private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Composable () -> Unit) {
+private fun SessionCard(
+    session: Session,
+    quest: QuestProject? = null,
+    onEdit: (Session) -> Unit,
+    action: @Composable () -> Unit,
+) {
     Card(
         Modifier.fillMaxWidth().clickable { onEdit(session) },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -413,6 +501,13 @@ private fun SessionCard(session: Session, onEdit: (Session) -> Unit, action: @Co
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(session.name, style = MaterialTheme.typography.titleLarge)
+                if (quest != null) {
+                    Text(
+                        "${quest.icon} ${quest.title}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = rgbColor(quest.color),
+                    )
+                }
                 Text(session.summary(), style = MaterialTheme.typography.bodyMedium)
                 if (!session.stopwatch) Text(
                     session.steps.joinToString("  ") { step ->
@@ -519,6 +614,8 @@ private fun EditorScreen(
     togglConnected: Boolean,
     /** The Toggl projects for the project menu. */
     loadProjects: suspend () -> List<TogglProject>,
+    /** Quests/Projekte aus dem Aufgaben-Bereich, denen die Session zugeordnet werden kann. */
+    quests: List<QuestProject> = emptyList(),
     /** Sessions of the same kind that can go in as one interval ("Session einfügen"). */
     insertable: List<Session>,
     onPreviewChime: (Chime, Boolean) -> Unit,
@@ -543,6 +640,7 @@ private fun EditorScreen(
     /** Project and description picked before every start instead of fixed. */
     var togglAsk by remember { mutableStateOf(initial.togglAsks) }
     var togglPauseStops by remember { mutableStateOf(initial.togglPauseStops) }
+    var questId by remember { mutableStateOf(initial.questId) }
     var hexText by remember { mutableStateOf(formatHexColor(initial.flashColor)) }
     val music = initial.music
     // Music intervals run for minutes, so they are typed in minutes.
@@ -611,6 +709,7 @@ private fun EditorScreen(
         togglProject = togglProject,
         togglAskProject = togglAsk,
         togglPauseStops = togglPauseStops,
+        questId = questId,
     )
     fun edited() = if (stopwatch) edits().copy(steps = stopwatchSteps(signalEvery!!), rounds = ENDLESS, signalEvery = signalEvery) else edits()
     var templateSaved by remember { mutableStateOf(false) }
@@ -904,6 +1003,21 @@ private fun EditorScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
+                }
+                if (quests.isNotEmpty()) {
+                    Text("Quest / Projekt", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                    Picker(
+                        "Quest",
+                        quests.firstOrNull { it.id == questId },
+                        listOf<QuestProject?>(null) + quests,
+                        { it?.let { "${it.icon} ${it.title}" } ?: "ohne Quest (Sonstiges)" },
+                    ) { questId = it?.id }
+                    Text(
+                        "Optional: Erfasste Zeiten dieser Session zählen automatisch für diese Quest im lokalen Kalender und Wochenrückblick.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
                 }
                 if (togglConnected) {
                     Text("Toggl", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
@@ -1267,6 +1381,49 @@ private fun RunningBanner(runs: List<RunState>, onOpen: () -> Unit) {
 }
 
 // --- Toggl ------------------------------------------------------------------
+
+/**
+ * Zeigt direkt im RunScreen die abhakbaren Unteraufgaben eines laufenden Fokus-Laufs,
+ * damit man auch beim Blick auf den großen Countdown Schritt für Schritt abhaken kann.
+ */
+@Composable
+private fun FocusRunSubtasks(run: RunState, taskStore: TaskStore) {
+    val sid = run.session.id
+    if (!sid.startsWith("focus_")) return
+    val snap by taskStore.state.collectAsState()
+    val idPart = sid.removePrefix("focus_")
+    val task = if (idPart.startsWith("task_")) snap.tasks.firstOrNull { it.id == idPart.removePrefix("task_") } else null
+    val quest = if (idPart.startsWith("quest_")) snap.quests.firstOrNull { it.id == idPart.removePrefix("quest_") } else null
+    val subtasks = task?.subtasks ?: quest?.subtasks ?: return
+    if (subtasks.isEmpty()) return
+
+    Card(
+        Modifier.padding(top = 12.dp).widthIn(max = 420.dp).fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Unteraufgaben", style = MaterialTheme.typography.titleSmall)
+            subtasks.forEach { sub ->
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        if (task != null) taskStore.toggleTaskSubtask(task.id, sub.id)
+                        else if (quest != null) taskStore.toggleQuestSubtask(quest.id, sub.id)
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = sub.done,
+                        onCheckedChange = {
+                            if (task != null) taskStore.toggleTaskSubtask(task.id, sub.id)
+                            else if (quest != null) taskStore.toggleQuestSubtask(quest.id, sub.id)
+                        },
+                    )
+                    Text(sub.title, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
 
 /**
  * Toggl under a run: while it runs a line says under which name it counts there (a tap renames it);

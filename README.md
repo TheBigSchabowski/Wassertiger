@@ -121,6 +121,26 @@ NicheLooper). Die Akustik-Samples (`shared/src/jvmCommonMain/resources/drums`) s
 Hydrogen-Drumkit „The Black Pearl 1.0“ von Glen MacArthur und stehen unter der GPL, siehe
 `drums/ATTRIBUTION.txt`.
 
+## Fokus & Aufgaben (Quests, Wochenplan, Kalender)
+
+Wassertiger hat **4 Hauptreiter**: **Timer**, **Musik**, **Fokus** und **Aufgaben** (inspiriert von
+**Niklas Steenfatt** / Quest.app):
+
+- **Quests & Wochenplan** (unter **Aufgaben** → *Woche*, *Quests*): Haupt- und Neben-Quests mit
+  Farbe, Wochenziel, Fortschrittsbalken, 8-Wochen-Sparkline, Subtasks zum Abhaken und optionaler
+  Toggl-Track-Verknüpfung; Aufgaben lassen sich auf Montag bis Sonntag oder den ungeplanten Pool
+  legen.
+- **Timer zu Quests zuordnen**: Im Session-Editor lässt sich jede Timer-, Stoppuhr- und
+  Musik-Session über **Quest / Projekt** einer Quest zuweisen.
+- **Flexibler Fokus-Reiter**: Ziel wählen (Quest, Aufgabe oder freier Fokus) und den Signal-Modus
+  frei einstellen – im **Pomodoro**-Stil (Fokus-/Pausen-Phasen), über eine bestehende **Timer**-Session,
+  periodisch, mit Meilensteinen oder lautlos, kombiniert mit Vibration, Leuchtfarbe und Ton sowie
+  live abhakbaren Subtasks.
+- **Lokaler Geräte-Kalender & Rückblick** (unter **Aufgaben** → *Kalender*, *Rückblick*): Jeder
+  Timer-, Stoppuhr-, Musik- und Fokus-Lauf wird automatisch lokal gespeichert (unabhängig von Toggl
+  Track); JSON-Export und Multi-JSON-Merge führen Läufe mehrerer Geräte ohne Duplikate zusammen, und
+  der Rückblick zeigt Mo–So-Balken, Quest-Verteilung und 8-Wochen-Trend.
+
 ## Aufbau
 
 - `shared` – Kotlin Multiplatform: Datenmodell, `TimerEngine`, `MusicEngine` (Drone + Drums), komplette

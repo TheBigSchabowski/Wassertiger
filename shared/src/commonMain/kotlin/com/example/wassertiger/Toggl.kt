@@ -39,6 +39,27 @@ expect fun isoInstant(millis: Long): String
 /** "09:30" in the device's time zone. */
 expect fun clockTime(millis: Long): String
 
+/** "YYYY-MM-DD" for today in the device's local time zone. */
+expect fun todayDate(): String
+
+/** "YYYY-MM-DD" for [millis] in the device's local time zone. */
+expect fun dateOfMillis(millis: Long): String
+
+/** Monday ("YYYY-MM-DD") of the ISO week containing [date]. */
+expect fun startOfIsoWeek(date: String): String
+
+/** Shifts [date] ("YYYY-MM-DD") by [days] calendar days. */
+expect fun addDaysToDate(date: String, days: Int): String
+
+/** Short German weekday and day label for [date], e.g. ("Mo", "17.11."). */
+expect fun formatDayHeader(date: String): Pair<String, String>
+
+/** German calendar week summary for [weekStart], e.g. "KW 47 · 16.11.–22.11.". */
+expect fun formatWeekHeader(weekStart: String): String
+
+/** Combines [date] ("YYYY-MM-DD") and [hhMm] ("HH:mm" or "H:mm") into UTC epoch millis; null if invalid. */
+expect fun combineDateAndTime(date: String, hhMm: String): Long?
+
 data class TogglProject(val id: Long, val name: String, val workspaceId: Long)
 
 /** [retryAfterMs]: worth trying again after that long (no network, Toggl's hourly limit). */

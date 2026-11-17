@@ -63,6 +63,24 @@ fun settingsStore(context: Context): SettingsStore {
     })
 }
 
+@Volatile
+private var cachedTaskStore: Pair<Context, TaskStore>? = null
+
+/** Prozessweiter Task-, Quest- und Kalender-Store, geteilt zwischen UI und [TimerService]. */
+fun taskStore(context: Context): TaskStore {
+    val app = context.applicationContext
+    cachedTaskStore?.let { (ctx, store) -> if (ctx === app) return store }
+    return synchronized(TaskStore::class.java) {
+        cachedTaskStore?.let { (ctx, store) -> if (ctx === app) return store }
+        val prefs = app.getSharedPreferences("tasks", Context.MODE_PRIVATE)
+        TaskStore(object : SessionStorage {
+            override fun read(): String? = prefs.getString("tasks_v1", null)
+            override fun write(json: String) = prefs.edit().putString("tasks_v1", json).apply()
+            override fun keepBroken(raw: String) = prefs.edit().putString("tasks_broken", raw).apply()
+        }).also { cachedTaskStore = app to it }
+    }
+}
+
 /** Set by tests to talk to a stand-in for Toggl. */
 internal var tracker: TogglTracker? = null
 
@@ -136,6 +154,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onPreviewChime = TimerService.chimes::play,
                     header = { PermissionHints() },
+                    tasks = taskStore(this),
                 )
             }
         }

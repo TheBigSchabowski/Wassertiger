@@ -160,6 +160,7 @@ fun main(args: Array<String>) {
 private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = application {
     val store = remember { SessionStore(FileStorage("sessions.json")) }
     val settings = remember { SettingsStore(FileStorage("settings.json")) }
+    val tasks = remember { TaskStore(FileStorage("tasks.json")) }
     val engine = remember { TimerEngine(MainScope()).apply { keepStopped = keepStopped(settings) } }
     val toggl = remember { TogglTracker(settings, MainScope()).apply { startHeartbeat() } }
     val scope = rememberCoroutineScope()
@@ -177,6 +178,9 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
     LaunchedEffect(engine) {
         engine.listener = { event, state ->
             toggl.onEvent(event, state)
+            val togglRun = toggl.runs.value[state.id]
+            val togglSynced = settings.togglToken != null && togglRun != null && !togglRun.deleted && !togglRun.waiting
+            tasks.onTimerEvent(event, state, togglSynced = togglSynced)
             // One drone at a time: the oldest music session still going plays.
             music.follow(engine.active.firstOrNull { it.session.music })
             val (t, s) = state.flashText()
@@ -236,6 +240,7 @@ private fun runApp(server: PracticeServer, initialPractice: PracticeRequest?) = 
                         }
                 },
                 onPreviewChime = chimes::play,
+                tasks = tasks,
             )
         }
     }
