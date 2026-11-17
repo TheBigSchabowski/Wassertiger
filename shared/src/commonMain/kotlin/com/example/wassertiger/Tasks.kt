@@ -440,7 +440,7 @@ class TaskStore(private val storage: SessionStorage) {
             questTitle = quest?.title,
             questColor = quest?.color,
             togglSynced = togglSynced,
-            aborted = event == TimerEvent.Stopped && !run.session.stopwatch,
+            aborted = event == TimerEvent.Stopped && !run.countsUp,
             updatedAt = nowWall,
         )
         update { snap -> snap.copy(entries = (listOf(entry) + snap.entries).sortedByDescending { it.startMillis }) }

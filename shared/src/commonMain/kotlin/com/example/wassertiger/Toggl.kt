@@ -62,6 +62,9 @@ expect fun combineDateAndTime(date: String, hhMm: String): Long?
 
 data class TogglProject(val id: Long, val name: String, val workspaceId: Long)
 
+/** A project offered when a session asks before starting, and whether it takes a description. */
+data class TogglChoice(val project: TogglProject, val withDescription: Boolean = true)
+
 /** [retryAfterMs]: worth trying again after that long (no network, Toggl's hourly limit). */
 class TogglException(message: String, val retryAfterMs: Long? = null) : Exception(message)
 
@@ -107,6 +110,21 @@ class Toggl(private val token: String, private val http: Http = ::httpRequest) {
                 workspaceId = o["workspace_id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null,
             )
         }.sortedBy { it.name.lowercase() }
+    }
+
+    /** Creates an active project [name] in [workspace]. */
+    suspend fun createProject(workspace: Long, name: String): TogglProject {
+        val entry = buildJsonObject {
+            put("name", name.trim())
+            put("active", true)
+        }
+        val body = call("POST", "workspaces/$workspace/projects", entry.toString())
+        val o = Json.parseToJsonElement(body).jsonObject
+        return TogglProject(
+            id = o["id"]?.jsonPrimitive?.longOrNull ?: throw TogglException("Toggl hat kein Projekt angelegt"),
+            name = o["name"]?.jsonPrimitive?.contentOrNull ?: name.trim(),
+            workspaceId = o["workspace_id"]?.jsonPrimitive?.longOrNull ?: workspace,
+        )
     }
 
     /** Creates an entry from [start]; without [stop] it runs on in Toggl. Returns its id. */
@@ -223,7 +241,7 @@ data class TogglRun(
     val ended: Boolean = false,
     /** [TogglTracker.onReport] has told about it. */
     val reported: Boolean = false,
-    /** Stopp is its normal end: never tagged [TOGGL_ABORTED_TAG]. */
+    /** Stopp is its normal end (a stopwatch, or a run counting on past its time): never tagged [TOGGL_ABORTED_TAG]. */
     val stopwatch: Boolean = false,
 ) {
     /** Counting in Toggl right now. */
@@ -247,7 +265,8 @@ data class TogglRun(
  * and project set for it in the editor; one that asks for them waits until they are given ([TogglRun.waiting]).
  * Only intervals with [Step.track] count: a pause or an untracked interval (a Pomodoro break) ends
  * the entry, the next tracked one starts a new one; the end stops it, and Stopp before the end
- * stops it there and tags it [TOGGL_ABORTED_TAG]. Toggl runs one timer at a time, so a run only
+ * stops it there and tags it [TOGGL_ABORTED_TAG]. A run that counts on past its time ([RunState.overtime])
+ * counts on in Toggl too, as part of its last interval; its Stopp is its end. Toggl runs one timer at a time, so a run only
  * counts live there while no other timer runs (the user's own included, which is never touched);
  * otherwise its stretches are booked as they end.
  *
@@ -360,9 +379,19 @@ class TogglTracker(
         chosen[session.id] = description?.let { it to project } to wallClockMillis()
     }
 
+    /** Last description booked for [projectId] in [sessionName]. */
+    fun projectDescription(sessionName: String, projectId: Long): String =
+        settings.lastProjectDescription(sessionName, projectId)
+            ?: settings.lastEntry(sessionName)?.takeIf { it.second?.id == projectId }?.first.orEmpty()
+
     /** Description and project offered for a run of [s] that asks for them: as last time for this session. */
     fun suggestion(s: Session): Pair<String, TogglProject?> {
         val last = settings.lastEntry(s.name)
+        if (s.togglChoices.isNotEmpty()) {
+            val choice = s.togglChoices.firstOrNull { it.project.id == last?.second?.id } ?: s.togglChoices.first()
+            val description = if (choice.withDescription) projectDescription(s.name, choice.project.id) else ""
+            return description to choice.project
+        }
         val description = if (s.togglAskDescription) last?.first ?: s.togglName else s.togglName
         val project = if (s.togglAskProject && last != null) last.second else s.togglProject
         return description to project
@@ -401,15 +430,18 @@ class TogglTracker(
                 if (counting == tracked) return
                 change(id) { it?.close(now)?.openIf(tracked, now) }
             }
+            // From here on Stopp is the normal end – also for whoever takes the run over (see adopt).
+            TimerEvent.Overtime -> change(id) { t -> t?.copy(stopwatch = true) }
             TimerEvent.Finished -> change(id) { t -> t?.close(run.endedAt)?.copy(ended = true) }
             TimerEvent.Stopped -> change(id) { t ->
                 when {
                     t == null -> null
                     // Dropped after moments (started by mistake): leaves no trace. One that stays on
                     // screen as "Gestoppt" (see keepStopped) stays in Toggl.
-                    (!run.stopped || run.session.stopwatch) && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
-                    // Stopp is how a stopwatch ends: nothing aborted about it.
-                    run.session.stopwatch -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(ended = true)
+                    // One past its time did what it set out to do, however short.
+                    (!run.stopped || run.session.stopwatch) && !run.overtime && run.activeMillis(now) < TOGGL_MIN_MILLIS -> t.copy(deleted = true)
+                    // Stopp is how a stopwatch ends, and a run counting on past its time: nothing aborted about it.
+                    run.session.stopwatch || run.overtime -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(ended = true)
                     else -> t.close(if (run.endedAt > 0) run.endedAt else now).copy(aborted = true, ended = true)
                 }
             }
@@ -486,6 +518,20 @@ class TogglTracker(
         val token = settings.togglToken ?: return emptyList()
         projectCache?.let { (at, list) -> if (wallClockMillis() - at < 10 * 60_000) return list }
         return client(token).projects().also { projectCache = wallClockMillis() to it }
+    }
+
+    /** Creates a new project in the default workspace (or returns an existing one with the same name). */
+    suspend fun createProject(name: String): TogglProject {
+        val trimmed = name.trim()
+        val existing = projects().firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
+        if (existing != null) return existing
+        val token = settings.togglToken ?: throw TogglException("Kein Toggl-Token eingetragen")
+        val toggl = client(token)
+        val workspace = settings.togglWorkspace ?: toggl.defaultWorkspace().also { settings.togglWorkspace = it }
+        val created = toggl.createProject(workspace, trimmed)
+        val updated = (projectCache?.second.orEmpty() + created).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+        projectCache = wallClockMillis() to updated
+        return created
     }
 
     /** Waits for every request so far (tests). */
@@ -613,6 +659,11 @@ class SettingsStore(private val storage: SessionStorage) {
         return description to o["project"]?.let(::readProject)
     }
 
+    /** Last non-blank description booked for [projectId] in [sessionName]. */
+    fun lastProjectDescription(sessionName: String, projectId: Long): String? =
+        read()["togglLast"]?.jsonObject?.get(sessionName)?.jsonObject
+            ?.get("byProject")?.jsonObject?.get(projectId.toString())?.jsonPrimitive?.contentOrNull
+
     /** What each Wassertiger still owes Toggl, by its [TogglTracker]'s name: when it last said so, and the runs. */
     fun togglPending(): Map<String, Pair<Long, List<TogglRun>>> =
         (read()["togglPending"] as? JsonObject).orEmpty().mapNotNull { (owner, element) ->
@@ -636,9 +687,15 @@ class SettingsStore(private val storage: SessionStorage) {
 
     fun rememberEntry(sessionName: String, description: String, project: TogglProject?) = write {
         val last = (this["togglLast"] as? JsonObject).orEmpty().toMutableMap()
+        val prev = last[sessionName] as? JsonObject
+        val byProject = (prev?.get("byProject") as? JsonObject).orEmpty().toMutableMap()
+        if (project != null && description.isNotBlank()) {
+            byProject[project.id.toString()] = JsonPrimitive(description)
+        }
         last[sessionName] = buildJsonObject {
             put("description", description)
             project?.let { put("project", writeProject(it)) }
+            if (byProject.isNotEmpty()) put("byProject", JsonObject(byProject))
         }
         put("togglLast", JsonObject(last))
     }
@@ -697,8 +754,9 @@ private fun readTogglRun(element: JsonElement): TogglRun {
 }
 
 /**
- * For [TimerEngine.keepStopped]: a stopwatch always stays to show its reading; a run Toggl follows
+ * For [TimerEngine.keepStopped]: a stopwatch always stays to show its reading, as does a run that
+ * counted on past its time; a run Toggl follows
  * stays as "Gestoppt" when stopped after a minute or more, so its entry can be renamed or deleted.
  */
 fun keepStopped(settings: SettingsStore): (RunState) -> Boolean =
-    { it.session.stopwatch || settings.togglToken != null && it.session.toggl && it.activeMillis() >= TOGGL_MIN_MILLIS }
+    { it.countsUp || settings.togglToken != null && it.session.toggl && it.activeMillis() >= TOGGL_MIN_MILLIS }

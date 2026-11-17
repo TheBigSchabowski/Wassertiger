@@ -70,13 +70,15 @@ class FlashActivity : ComponentActivity() {
                 // On screen already: flash at every change by itself. A full-screen intent would only
                 // bring a banner, as the system does not launch one over a lit screen again.
                 LaunchedEffect(Unit) {
-                    var seen = emptyMap<Long, Pair<Int, Int>>()
+                    // Interval, round and whether the time is up: a change in any of them is a signal.
+                    fun place(run: RunState) = Triple(run.index, run.round, run.overtime)
+                    var seen = emptyMap<Long, Triple<Int, Int, Boolean>>()
                     TimerService.engine.runs.collect { now ->
                         now.forEach { run ->
                             val was = seen[run.id]
-                            if (was != null && was != (run.index to run.round) && visible) flashFor(run)
+                            if (was != null && was != place(run) && visible) flashFor(run)
                         }
-                        seen = now.associate { it.id to (it.index to it.round) }
+                        seen = now.associate { it.id to place(it) }
                     }
                 }
                 val runs by TimerService.engine.runs.collectAsState()
@@ -131,8 +133,10 @@ class FlashActivity : ComponentActivity() {
 
     private fun flashFor(run: RunState) {
         val (title, text) = run.flashText()
-        flash = Flash(run.id, title, text, run.finished, run.session.flashMillis, run.session.flashColor)
-        window.setBackgroundDrawable(ColorDrawable(0xFF000000.toInt() or (if (run.finished) DONE_GREEN_RGB else run.session.flashColor)))
+        // Green for the end, and for a time that is up while the run counts on.
+        val over = run.finished || run.overtime
+        flash = Flash(run.id, title, text, over, run.session.flashMillis, run.session.flashColor)
+        window.setBackgroundDrawable(ColorDrawable(0xFF000000.toInt() or (if (over) DONE_GREEN_RGB else run.session.flashColor)))
         setBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL)
     }
 
@@ -151,7 +155,9 @@ class FlashActivity : ComponentActivity() {
         flash = null
         // The countdown follows at the usual brightness, so it does not dazzle at night.
         setBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-        if (f.finished || leaveAfterFlash || TimerService.engine.active.isEmpty()) finish()
+        // A run that counts on past its time flashed "finished" but is still there: its clock follows.
+        val over = f.finished && TimerService.engine.run(f.runId)?.finished != false
+        if (over || leaveAfterFlash || TimerService.engine.active.isEmpty()) finish()
     }
 
     private fun setBrightness(value: Float) {

@@ -44,6 +44,11 @@ data class RunState(
     /** [monotonicMillis] at the start and at the end, for the stopwatch's reading (see [elapsedMs]). */
     val startedMono: Long? = null,
     val endedMono: Long? = null,
+    /**
+     * [monotonicMillis] at which the planned time ran out and the run went on counting until Stopp
+     * (see [Session.overtime]); null before that. A pause moves it on, so [overtimeMs] leaves pauses out.
+     */
+    val overtimeAt: Long? = null,
 ) {
     val step: Step? get() = session.steps.getOrNull(index)
     val lastRound: Boolean get() = !session.endless && round >= session.rounds - 1
@@ -56,6 +61,22 @@ data class RunState(
         else -> ""
     }
     val paused: Boolean get() = pausedRemaining != null
+
+    /** The planned time is up and the run counts on like a stopwatch until Stopp (see [Session.overtime]). */
+    val overtime: Boolean get() = overtimeAt != null
+
+    /** Shows running time counting up instead of an interval counting down. */
+    val countsUp: Boolean get() = session.stopwatch || overtime
+
+    /** Something still to signal: not a quiet stopwatch, and not counting on after the last signal. */
+    val signalsAhead: Boolean get() = session.signals && !overtime
+
+    /** How long it has gone on past its planned time, pauses left out; 0 before that. */
+    fun overtimeMs(now: Long = monotonicMillis()): Long {
+        val since = overtimeAt ?: return 0
+        val end = if (finished) endedMono ?: now else pausedAt ?: now
+        return (end - since).coerceAtLeast(0)
+    }
     fun remainingMs(now: Long = monotonicMillis()): Long =
         pausedRemaining ?: (stepEndAt - now).coerceAtLeast(0)
 
@@ -78,10 +99,19 @@ data class RunState(
 
     /** The current pause folded into [pausedMs], as when it ends. */
     internal fun pauseEnded(now: Long): RunState =
-        if (pausedAt == null) this else copy(pausedMs = pausedMs + (now - pausedAt), pausedAt = null, pausedRemaining = null)
+        if (pausedAt == null) this else copy(
+            pausedMs = pausedMs + (now - pausedAt),
+            pausedAt = null,
+            pausedRemaining = null,
+            overtimeAt = overtimeAt?.plus(now - pausedAt),
+        )
 }
 
-enum class TimerEvent { Started, Step, PauseChanged, Finished, Stopped }
+/**
+ * [Overtime]: the planned time of a session that counts on ran out (see [Session.overtime]) – the
+ * signal of the end, but the run goes on until Stopp, which then comes as [Stopped].
+ */
+enum class TimerEvent { Started, Step, PauseChanged, Finished, Stopped, Overtime }
 
 /**
  * Steps through sessions, any number at once. The platform reacts to [TimerEvent]s (vibrate, light
@@ -150,21 +180,25 @@ class TimerEngine(private val scope: CoroutineScope) {
     }
 
     fun skip(id: Long) {
-        val s = run(id)?.takeIf { !it.finished } ?: return
+        // Nothing left to skip once the time is up.
+        val s = run(id)?.takeIf { !it.finished && !it.overtime } ?: return
         val now = monotonicMillis()
         replace(s.pauseEnded(now))
         advance(id, now)
         runLoop(id)
     }
 
-    /** Ends the run; a finished one is just cleared. See [keepStopped]. */
+    /**
+     * Ends the run; a finished one is just cleared. See [keepStopped]. Stopp is the normal end of a
+     * run in [RunState.overtime]: it is not [RunState.stopped].
+     */
     fun stop(id: Long) {
         val s = run(id) ?: return
         if (s.finished) return dismiss(id)
         if (!keepStopped(s)) return drop(id)
         loops.remove(id)?.cancel()
         val now = monotonicMillis()
-        val ended = s.pauseEnded(now).copy(finished = true, stopped = true, endedAt = wallClockMillis(), endedMono = now)
+        val ended = s.pauseEnded(now).copy(finished = true, stopped = !s.overtime, endedAt = wallClockMillis(), endedMono = now)
         replace(ended)
         listener(TimerEvent.Stopped, ended)
     }
@@ -196,7 +230,8 @@ class TimerEngine(private val scope: CoroutineScope) {
         loops[id] = scope.launch {
             while (true) {
                 val s = run(id) ?: break
-                if (s.paused || s.finished) break
+                // In overtime there is nothing to wait for: the clock is read when looked at.
+                if (s.paused || s.finished || s.overtime) break
                 val remaining = s.stepEndAt - monotonicMillis()
                 // Short sleeps, re-checked against the real clock, so a late wakeup never drifts.
                 if (remaining <= 0) advance(id, s.stepEndAt) else delay(minOf(remaining, 500L))
@@ -206,8 +241,15 @@ class TimerEngine(private val scope: CoroutineScope) {
 
     /** Ends the current step at [endedAt] and moves on, into the next round if any (or finishes). */
     private fun advance(id: Long, endedAt: Long) {
-        val s = run(id) ?: return
+        val s = run(id)?.takeIf { !it.overtime } ?: return
         val roundOver = s.index + 1 >= s.session.steps.size
+        if (roundOver && s.lastRound && s.session.overtime) {
+            // Stays on its last interval and counts on from here.
+            val over = s.copy(stepEndAt = endedAt, overtimeAt = endedAt)
+            replace(over)
+            listener(TimerEvent.Overtime, over)
+            return
+        }
         if (roundOver && s.lastRound) {
             val done = s.copy(index = s.session.steps.size, finished = true, endedAt = wallClockMillis())
             replace(done)
@@ -232,6 +274,7 @@ class TimerEngine(private val scope: CoroutineScope) {
 fun RunState.flashText(now: Long? = null): Pair<String, String> {
     if (session.stopwatch) return formatClock(elapsedMs(now ?: monotonicMillis())) to session.name
     if (finished) return (if (stopped) "Gestoppt" else "Fertig!") to session.name
+    if (overtime) return "Zeit um" to "${session.name} · läuft weiter bis Stopp"
     val step = step ?: return "" to ""
     val position = if (session.steps.size > 1) "${index + 1} / ${session.steps.size}" else ""
     val clock = now?.let { formatDuration(remainingSeconds(it).coerceAtLeast(1)) }

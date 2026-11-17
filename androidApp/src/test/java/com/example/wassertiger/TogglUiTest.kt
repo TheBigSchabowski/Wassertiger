@@ -143,4 +143,43 @@ class TogglUiTest {
             assertTrue("one block", saved.steps.all { it.track })
         }
     }
+
+    @Test
+    fun configuredChoicesOfferChipsWithAndWithoutDescription() {
+        val schach = TogglProject(1, "Schach", 7)
+        val mauro = TogglProject(2, "Mauro", 7)
+        val pomodoro = Session(
+            name = "Pomodoro",
+            steps = listOf(Step(25 * 60, "Fokus"), Step(5 * 60, "Pause")),
+            rounds = 4,
+            toggl = true,
+            togglAskDescription = true,
+            togglAskProject = true,
+            togglChoices = listOf(
+                TogglChoice(schach, withDescription = true),
+                TogglChoice(mauro, withDescription = false),
+            ),
+        )
+        sessionStore(context).save(listOf(pomodoro))
+        ActivityScenario.launch(MainActivity::class.java).use {
+            rule.onNodeWithText("Start").performClick()
+            rule.onNodeWithText("Pomodoro – für Toggl").assertExists()
+            rule.onNodeWithText("Schach").assertExists()
+            rule.onNodeWithText("Mauro").assertExists()
+            rule.onNodeWithText("Beschreibung").assertExists()
+
+            rule.onNodeWithText("Mauro").performClick()
+            rule.onNodeWithText("Beschreibung").assertDoesNotExist()
+            rule.onNodeWithText("Ohne Beschreibung").assertExists()
+
+            rule.onNodeWithText("Schach").performClick()
+            rule.onNodeWithText("Beschreibung").assertExists()
+
+            rule.onNodeWithText("Mauro").performClick()
+            rule.onNodeWithText("Starten").performClick()
+            rule.onNodeWithText("Pomodoro – für Toggl").assertDoesNotExist()
+            TimerService.engine.start(pomodoro)
+            rule.onNodeWithText("● Toggl zählt mit: Mauro").performScrollTo().assertExists()
+        }
+    }
 }

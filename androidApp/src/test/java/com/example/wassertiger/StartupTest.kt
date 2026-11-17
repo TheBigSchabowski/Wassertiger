@@ -49,6 +49,9 @@ class StartupTest {
 
     @Test
     fun savesOwnTemplate() {
+        // The list only builds what is on screen: bring the presets up first.
+        rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+            .performScrollToNode(hasText("Atemübung"))
         rule.onNodeWithText("Atemübung").performScrollTo().performClick()
         rule.onNode(hasScrollAction()).performScrollToNode(hasText("Als Vorlage speichern"))
         rule.onNodeWithText("Als Vorlage speichern").performClick()

@@ -82,6 +82,11 @@ data class Session(
     /** Asks for the project at every run instead of using [togglProject]. */
     val togglAskProject: Boolean = false,
     /**
+     * Projects offered when [togglAsks] is true, and whether each one asks for a description;
+     * empty = all Toggl projects are offered with a description field.
+     */
+    val togglChoices: List<TogglChoice> = emptyList(),
+    /**
      * The pause button pauses Toggl too (ends the entry, Weiter starts a new one); off (the default):
      * Toggl counts on, so the whole session stays one block.
      */
@@ -93,6 +98,13 @@ data class Session(
     val stopwatch: Boolean = false,
     /** A stopwatch lights up / buzzes every this many seconds; 0 = never, a plain stopwatch. */
     val signalEvery: Int = 0,
+    /** Put aside: out of the lists, widgets and "Session einfügen", but kept under "Archiv" to bring back. */
+    val archived: Boolean = false,
+    /**
+     * When its time is up it gives the signal of the end and then counts on like a stopwatch, Toggl
+     * included, until Stopp (a walk planned for 20 minutes that takes 25). Nothing for an [endless] one.
+     */
+    val overtime: Boolean = false,
     /** Optionale Zuordnung zu einer Quest/einem Projekt aus [TaskStore] für Kalender & Wochenauswertung. */
     val questId: String? = null,
 ) {
@@ -129,8 +141,8 @@ data class Session(
         return Step(seconds = all.sumOf { it.seconds }, name = name, block = all)
     }
     /** A fresh session to edit and start, built from this one (a preset or template). */
-    fun newSession(): Session = copy(id = newId(), template = false)
-    fun asTemplate(): Session = copy(id = newId(), template = true)
+    fun newSession(): Session = copy(id = newId(), template = false, archived = false)
+    fun asTemplate(): Session = copy(id = newId(), template = true, archived = false)
     val roundSeconds: Int get() = steps.sumOf { it.seconds }
     /** Length of the whole run, null when [endless]. */
     val totalSeconds: Int? get() = if (endless) null else roundSeconds * rounds
@@ -150,7 +162,8 @@ data class Session(
             ToneMode.END -> " Am Ende ertönt ${chime.article()}."
             ToneMode.EVERY -> " Dazu ertönt ${chime.article()}."
         }
-        return (if (stopwatch) "alle ${formatDuration(signalEvery)} " else "bei jedem Wechsel ") + light + sound
+        return (if (stopwatch) "alle ${formatDuration(signalEvery)} " else "bei jedem Wechsel ") + light + sound +
+            if (overtime && !endless) " Nach dem Ende zählt die Zeit weiter, bis du Stopp drückst." else ""
     }
 }
 
@@ -266,6 +279,9 @@ fun stopwatchSteps(signalEvery: Int): List<Step> = listOf(Step(if (signalEvery >
 
 private const val STOPWATCH_QUIET_SECONDS = 24 * 3600
 
+/** A new timer of the third kind: one stretch of time, then it counts on until Stopp (see [Session.overtime]). */
+fun newOvertimeTimer(): Session = Session(name = "Timer", steps = listOf(Step(20 * 60)), overtime = true)
+
 /** A new stopwatch: counts up, no signal, Toggl off. */
 fun newStopwatch(): Session = Session(name = "Stoppuhr", steps = stopwatchSteps(0), rounds = ENDLESS, stopwatch = true)
 
@@ -277,7 +293,7 @@ fun Session.summary(): String {
         endless -> "$intervals · endlos wiederholt"
         rounds == 1 -> "$intervals · ${formatDuration(roundSeconds)}"
         else -> "$intervals × $rounds Runden · ${formatDuration(roundSeconds * rounds)}"
-    }
+    } + if (overtime && !endless) " · danach weiter bis Stopp" else ""
 }
 
 /** Music intervals: a plain number counts minutes ("20"), anything with a colon as in [parseDuration]. */
@@ -364,10 +380,13 @@ class SessionStore(private val storage: SessionStorage) {
             togglAskDescription = o["togglAskDescription"]?.jsonPrimitive?.boolean ?: false,
             togglProject = o["togglProject"]?.let { readProject(it) },
             togglAskProject = o["togglAskProject"]?.jsonPrimitive?.boolean ?: false,
+            togglChoices = o["togglChoices"]?.jsonArray?.mapNotNull(::readChoice).orEmpty(),
             // "togglPauseStops" (before 1.10.0) was true for nearly everyone as the old default: not carried over.
             togglPauseStops = o["togglPauseSplits"]?.jsonPrimitive?.boolean ?: false,
             stopwatch = o["stopwatch"]?.jsonPrimitive?.boolean ?: false,
             signalEvery = o["signalEvery"]?.jsonPrimitive?.intOrNull ?: 0,
+            archived = o["archived"]?.jsonPrimitive?.boolean ?: false,
+            overtime = o["overtime"]?.jsonPrimitive?.boolean ?: false,
             questId = o["questId"]?.jsonPrimitive?.contentOrNull,
         ).also { require(it.steps.isNotEmpty() && it.steps.all { s -> s.seconds > 0 }) }
     }
@@ -393,11 +412,16 @@ class SessionStore(private val storage: SessionStorage) {
                     put("togglAskDescription", session.togglAskDescription)
                     session.togglProject?.let { put("togglProject", writeProject(it)) }
                     put("togglAskProject", session.togglAskProject)
+                    if (session.togglChoices.isNotEmpty()) {
+                        put("togglChoices", buildJsonArray { session.togglChoices.forEach { add(writeChoice(it)) } })
+                    }
                     put("togglPauseSplits", session.togglPauseStops)
                     if (session.stopwatch) {
                         put("stopwatch", true)
                         put("signalEvery", session.signalEvery)
                     }
+                    if (session.archived) put("archived", true)
+                    if (session.overtime) put("overtime", true)
                     session.questId?.let { put("questId", it) }
                     put("steps", writeSteps(session.steps))
                 })
@@ -456,4 +480,16 @@ fun readProject(element: JsonElement): TogglProject? {
         name = p["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         workspaceId = p["workspace"]?.jsonPrimitive?.longOrNull ?: return null,
     )
+}
+
+fun writeChoice(c: TogglChoice): JsonObject = buildJsonObject {
+    put("project", writeProject(c.project))
+    put("withDescription", c.withDescription)
+}
+
+fun readChoice(element: JsonElement): TogglChoice? {
+    val o = element as? JsonObject ?: return null
+    val project = o["project"]?.let(::readProject) ?: return null
+    val withDescription = o["withDescription"]?.jsonPrimitive?.boolean ?: true
+    return TogglChoice(project, withDescription)
 }

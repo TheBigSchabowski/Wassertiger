@@ -31,9 +31,9 @@ object Widgets {
         }
     }
 
-    /** What the app's lists show: own sessions, timer first, then music; no templates. */
+    /** What the app's lists show: own sessions, timer first, then music; no templates, nothing archived. */
     fun startable(context: Context): List<Session> =
-        sessionStore(context).load().filter { !it.template }.sortedBy { it.music }
+        sessionStore(context).load().filter { !it.template && !it.archived }.sortedBy { it.music }
 
     /** The session a [SessionWidget] starts, picked in [SessionWidgetConfigActivity]. */
     fun tileSession(context: Context, widgetId: Int): String? = tilePrefs(context).getString(key(widgetId), null)
@@ -68,7 +68,7 @@ object Widgets {
             views.setTextViewText(R.id.run_pause, context.getString(if (run.paused) R.string.widget_resume else R.string.widget_pause))
             views.setOnClickPendingIntent(R.id.run_pause, TimerService.actionPendingIntent(context, TimerService.ACTION_TOGGLE_PAUSE, run.id))
             views.setOnClickPendingIntent(R.id.run_skip, TimerService.actionPendingIntent(context, TimerService.ACTION_SKIP, run.id))
-            views.setViewVisibility(R.id.run_skip, if (run.session.stopwatch) View.GONE else View.VISIBLE)
+            views.setViewVisibility(R.id.run_skip, if (run.countsUp) View.GONE else View.VISIBLE)
             views.setOnClickPendingIntent(R.id.run_stop, TimerService.actionPendingIntent(context, TimerService.ACTION_STOP, run.id))
         }
 
@@ -125,6 +125,7 @@ object Widgets {
     /** "Einatmen · 1 / 2 · Runde 3 / 30"; music shows what to play and the sound. */
     private fun stepLabel(run: RunState): String {
         if (run.session.stopwatch) return run.session.summary()
+        if (run.overtime) return "Zeit um · läuft weiter"
         val step = run.step ?: return ""
         val what = if (run.session.music) step.name.ifBlank { step.soundLabel() } else step.name
         val position = if (run.session.steps.size > 1) "${run.index + 1} / ${run.session.steps.size}" else ""
@@ -136,7 +137,7 @@ object Widgets {
      * redraw every second. Both sides tick on [SystemClock.elapsedRealtime] ([monotonicMillis]).
      */
     private fun showClock(views: RemoteViews, id: Int, run: RunState) {
-        if (run.session.stopwatch) {
+        if (run.countsUp) {
             views.setChronometer(id, SystemClock.elapsedRealtime() - run.elapsedMs(), null, !run.paused)
             views.setChronometerCountDown(id, false)
             return

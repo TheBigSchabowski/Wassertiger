@@ -29,6 +29,11 @@ eigenen Knöpfe, auf Android ihre eigene Benachrichtigung. Musik spielt immer nu
 Eigene Vorlagen: im Editor „Als Vorlage speichern“. Sie stehen dann unter „Meine Vorlagen“; „Neu daraus“
 legt eine Session davon an, ein Tipp auf die Vorlage bearbeitet oder löscht sie.
 
+**Markieren, löschen, archivieren:** Ein langer Druck auf eine Session (oder Vorlage) markiert sie; danach
+markiert jeder Tipp weitere. Oben steht dann, wie viele markiert sind, mit „Archivieren“ und „Löschen“ (fragt
+nach); ✕ oder Zurück hebt die Markierung auf. Archivierte Sessions verschwinden aus Liste, Widgets und
+„Session einfügen“ und liegen ganz unten unter „Archiv“ – dort holt „Zurückholen“ sie wieder.
+
 | Plattform | Signal beim Wechsel |
 |---|---|
 | Android | Vibration (Dauer pro Session: 1–8 s) + Display geht für ~2,5 s an (auch bei gesperrtem Handy) |
@@ -50,13 +55,24 @@ Display schon an ist.
 mit einem Signal *alle N Sekunden*, das wie bei den Sessions leuchtet, vibriert und/oder tönt. Nach Stopp bleibt die
 Zeit stehen. Toggl geht wie bei jeder Session (Stopp ist hier das normale Ende, nicht „abgebrochen“).
 
+**Timer, der weiterzählt:** „+ Neuer Timer, der weiterzählt“ unter den Sessions – die dritte Art neben Session und
+Stoppuhr. Du stellst eine Zeit ein (z. B. 20 Minuten mit Mauro); ist sie um, kommt das Signal vom Ende (Vibration,
+grünes Aufleuchten, auf Wunsch Ton), und die Uhr zählt von selbst wie eine Stoppuhr weiter, bis du Stopp drückst.
+Dauert es fünf Minuten länger, steht am Ende „Fertig! 25:00 – davon 5:00 länger als geplant“; wer gleich beim Signal
+Stopp drückt, hat genau die geplante Zeit. Toggl zählt die ganze Zeit als einen Eintrag mit, und Stopp ist hier das
+normale Ende (nur wer *vor* Ablauf stoppt, bricht ab). Dahinter steckt der Schalter „Nach dem Ende weiterzählen, bis
+Stopp“ im Editor unter „Wiederholen“ – den hat jede Session, auch ein Pomodoro oder eine Musik-Übung kann so auslaufen.
+
 **Toggl Track:** Oben rechts „Toggl“ → API-Token eintragen (Toggl: Profil → API Token). Jede Session wählt im
 Editor unter „Toggl“ eine von drei Möglichkeiten:
 
 - **Nicht erfassen** – Standard; die Session benutzt Toggl gar nicht.
 - **Immer gleich** – wird automatisch erfasst: ohne Angaben unter dem Session-Namen (z. B. „Dankbarkeit“), oder mit
   Projekt aus deiner Toggl-Liste und optionaler Beschreibung (z. B. nur „Musik“).
-- **Vor dem Start fragen** – „Start“ fragt erst nach Projekt und Beschreibung (z. B. beim Pomodoro).
+- **Vor dem Start fragen** – „Start“ fragt erst nach Projekt und Beschreibung (z. B. beim Pomodoro). Im Editor
+  lässt sich die Auswahl auf bestimmte Projekte eingrenzen und pro Projekt festlegen, ob eine Beschreibung abgefragt
+  wird (z. B. *Musik* und *Schach* mit Beschreibung, *Mauro* und *Arbeit* ohne Beschreibung); neue Toggl-Projekte
+  entstehen dort direkt über „+ Neues Projekt …“.
 
 Erfasst wird die **ganze Session als ein Block** (ein Pomodoro = 2 Stunden), auch über den Pause-Knopf hinweg.
 Wer nur einzelne Intervalle erfassen will, schaltet „Nur diese Intervalle erfassen“ ein und wählt sie aus; wer
@@ -165,6 +181,11 @@ Fertige Pakete (APK, .deb, Linux-tar.gz) hängen an den GitHub-Releases. Das Rel
 `./gradlew :androidApp:assembleRelease` und signiert es mit `~/.android/wassertiger-release.jks`
 (+ `.pass`); fehlt der Schlüssel, bleibt das APK unsigniert. Updates lassen sich nur mit demselben
 Schlüssel über eine installierte Version spielen.
+
+**Release ohne Mac:** Sobald ein GitHub-Release veröffentlicht wird, baut der Workflow `macOS-DMG`
+(`.github/workflows/dmg.yml`) das DMG auf einem GitHub-Mac und hängt es nach ein paar Minuten an das Release.
+Für ein älteres Release: auf GitHub unter Actions → macOS-DMG → „Run workflow“ den Tag eintragen (z. B. `v1.12.0`).
+Das DMG ist nicht von Apple beglaubigt; beim ersten Öffnen einmal Rechtsklick → „Öffnen“.
 
 `./gradlew :androidApp:testDebugUnitTest` startet die App ohne Gerät (Robolectric) und spielt die
 Beispiel-Session an.

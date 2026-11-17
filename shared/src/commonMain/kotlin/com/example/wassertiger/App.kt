@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -151,6 +154,9 @@ fun WassertigerApp(
     var editing by remember { mutableStateOf<Session?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
     var focusTarget by remember { mutableStateOf<FocusTarget>(FocusTarget.Free) }
+    /** Ids of the sessions marked by a long press, to delete or archive in one go. */
+    var marked by remember { mutableStateOf(emptySet<String>()) }
+    var confirmDeleteMarked by remember { mutableStateOf(false) }
     /** Sessions run, and the list is up to start one more beside them. */
     var picking by remember { mutableStateOf(false) }
     LaunchedEffect(runs.isEmpty()) { if (runs.isEmpty()) picking = false }
@@ -189,6 +195,19 @@ fun WassertigerApp(
                 engine.dismiss(run.id)
             },
         ) { leaving = null }
+    }
+    if (confirmDeleteMarked) {
+        val doomed = sessions.filter { it.id in marked }
+        Confirm(
+            if (doomed.size == 1) "„${doomed.first().name}“ löschen?" else "${doomed.size} Sessions löschen?",
+            (if (doomed.size == 1) "" else doomed.joinToString(", ") { it.name } + ". ") + "Das lässt sich nicht rückgängig machen.",
+            "Löschen",
+            onConfirm = {
+                sessions = sessions.filter { it.id !in marked }
+                store.save(sessions)
+                marked = emptySet()
+            },
+        ) { confirmDeleteMarked = false }
     }
     // Key events need a focused node; Timer/Musik have no text fields, so the whole page takes focus.
     LaunchedEffect(onList, pager.currentPage) {
@@ -230,7 +249,8 @@ fun WassertigerApp(
                     togglConnected = togglToken != null,
                     loadProjects = toggl::projects,
                     quests = taskSnapshot.quests,
-                    insertable = sessions.filter { it.music == edit.music && it.id != edit.id }.sortedBy { it.template } +
+                    createProject = toggl::createProject,
+                    insertable = sessions.filter { it.music == edit.music && it.id != edit.id && !it.archived }.sortedBy { it.template } +
                         (if (edit.music) musicPresets() else presets()).filter { p -> sessions.none { it.name == p.name } },
                     onPreviewChime = onPreviewChime,
                     onSaveAsTemplate = { template ->
@@ -249,6 +269,7 @@ fun WassertigerApp(
                     onDelete = {
                         sessions = sessions.filter { it.id != edit.id }
                         store.save(sessions)
+                        marked = marked - edit.id
                         editing = null
                     },
                     onCancel = { editing = null },
@@ -270,7 +291,23 @@ fun WassertigerApp(
                 )
                 else -> Column {
                     if (picking) PlatformBackHandler { picking = false }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (marked.isNotEmpty()) {
+                        PlatformBackHandler { marked = emptySet() }
+                        val chosen = sessions.filter { it.id in marked }
+                        // Only archived ones marked: the same button brings them back.
+                        val restore = chosen.all { it.archived }
+                        MarkedBar(
+                            count = chosen.size,
+                            restore = restore,
+                            onArchive = {
+                                sessions = sessions.map { if (it.id in marked) it.copy(archived = !restore) else it }
+                                store.save(sessions)
+                                marked = emptySet()
+                            },
+                            onDelete = { confirmDeleteMarked = true },
+                            onCancel = { marked = emptySet() },
+                        )
+                    } else Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Wassertiger",
                             style = MaterialTheme.typography.headlineMedium,
@@ -293,7 +330,7 @@ fun WassertigerApp(
                     }
                     HorizontalPager(pager, Modifier.weight(1f)) { page ->
                         val availableFocusSessions = remember(sessions) {
-                            sessions.filter { !it.template } + presets()
+                            sessions.filter { !it.template && !it.archived } + presets()
                         }
                         when (page) {
                             2 -> FocusTabScreen(
@@ -336,9 +373,16 @@ fun WassertigerApp(
                                 val music = page == 1
                                 ListScreen(
                                     music = music,
-                                    sessions = sessions.filter { !it.template && it.music == music },
-                                    templates = sessions.filter { it.template && it.music == music },
+                                    sessions = sessions.filter { !it.template && !it.archived && it.music == music },
+                                    templates = sessions.filter { it.template && !it.archived && it.music == music },
                                     questsById = questsById,
+                                    archived = sessions.filter { it.archived && it.music == music },
+                                    marked = marked,
+                                    onMark = { marked = if (it.id in marked) marked - it.id else marked + it.id },
+                                    onRestore = { restored ->
+                                        sessions = sessions.map { if (it.id == restored.id) it.copy(archived = false) else it }
+                                        store.save(sessions)
+                                    },
                                     header = {
                                         if (picking && runs.isNotEmpty()) RunningBanner(runs) { picking = false }
                                         header()
@@ -424,11 +468,19 @@ private fun ListScreen(
     sessions: List<Session>,
     templates: List<Session>,
     questsById: Map<String, QuestProject> = emptyMap(),
+    /** Sessions and templates put aside, shown folded up at the end. */
+    archived: List<Session>,
+    /** Ids marked by a long press; while there are any, a tap marks too instead of editing. */
+    marked: Set<String>,
+    onMark: (Session) -> Unit,
+    onRestore: (Session) -> Unit,
     header: @Composable () -> Unit,
     onStart: (Session) -> Unit,
     onEdit: (Session) -> Unit,
     onNew: (Session?) -> Unit,
 ) {
+    var archiveOpen by remember { mutableStateOf(false) }
+    val selecting = marked.isNotEmpty()
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -445,7 +497,7 @@ private fun ListScreen(
             }
         }
         itemsIndexed(sessions, key = { _, s -> s.id }) { _, session ->
-            SessionCard(session, questsById[session.questId], onEdit) {
+            SessionCard(session, selecting, session.id in marked, questsById[session.questId], onEdit, onMark) {
                 Button(onClick = { onStart(session) }) { Text("Start") }
             }
         }
@@ -455,6 +507,10 @@ private fun ListScreen(
                     Text(if (music) "+ Neue Übung" else "+ Neue Session")
                 }
                 if (!music) OutlinedButton(onClick = { onNew(newStopwatch()) }, modifier = Modifier.weight(1f)) { Text("+ Neue Stoppuhr") }
+            }
+            // The third kind: a time that, once up, counts on until Stopp.
+            if (!music) OutlinedButton(onClick = { onNew(newOvertimeTimer()) }, modifier = Modifier.fillMaxWidth()) {
+                Text("+ Neuer Timer, der weiterzählt")
             }
         }
         item {
@@ -477,25 +533,70 @@ private fun ListScreen(
         if (templates.isNotEmpty()) {
             item { Text("Meine Vorlagen", style = MaterialTheme.typography.labelLarge) }
             itemsIndexed(templates, key = { _, s -> s.id }) { _, template ->
-                SessionCard(template, questsById[template.questId], onEdit) {
+                SessionCard(template, selecting, template.id in marked, questsById[template.questId], onEdit, onMark) {
                     FilledTonalButton(onClick = { onNew(template) }) { Text("Neu daraus") }
                 }
             }
-            item { Spacer(Modifier.height(24.dp)) }
+        }
+        if (archived.isNotEmpty()) {
+            item {
+                TextButton(onClick = { archiveOpen = !archiveOpen }) {
+                    Text("Archiv (${archived.size}) " + if (archiveOpen) "▴" else "▾")
+                }
+            }
+            if (archiveOpen) itemsIndexed(archived, key = { _, s -> s.id }) { _, session ->
+                SessionCard(session, selecting, session.id in marked, questsById[session.questId], onEdit, onMark) {
+                    FilledTonalButton(onClick = { onRestore(session) }) { Text("Zurückholen") }
+                }
+            }
+        }
+        item {
+            Text(
+                "Lange drücken markiert Sessions – zum Löschen oder Archivieren mehrerer auf einmal.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 24.dp),
+            )
         }
     }
 }
 
-/** Tapping the card edits [session]; [action] sits on the right. */
+/** Stands in for the title while sessions are marked: how many, and what to do with them. */
+@Composable
+private fun MarkedBar(count: Int, restore: Boolean, onArchive: () -> Unit, onDelete: () -> Unit, onCancel: () -> Unit) {
+    Row(Modifier.padding(start = 4.dp, top = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onCancel, modifier = Modifier.semantics { contentDescription = "Markierung aufheben" }) { Text("✕") }
+        Text("$count markiert", style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f))
+        TextButton(onClick = onArchive) { Text(if (restore) "Zurückholen" else "Archivieren") }
+        TextButton(onClick = onDelete) { Text("Löschen", color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+/**
+ * Tapping the card edits [session]; [action] sits on the right. A long press marks it; while any card
+ * is marked ([selecting]), a tap marks or unmarks too and a tick stands in for [action].
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionCard(
     session: Session,
+    selecting: Boolean,
+    marked: Boolean,
     quest: QuestProject? = null,
     onEdit: (Session) -> Unit,
+    onMark: (Session) -> Unit,
     action: @Composable () -> Unit,
 ) {
     Card(
-        Modifier.fillMaxWidth().clickable { onEdit(session) },
+        Modifier.fillMaxWidth()
+            .then(if (marked) Modifier.border(2.dp, Amber, CardDefaults.shape) else Modifier)
+            .clip(CardDefaults.shape)
+            .combinedClickable(
+                onLongClick = { onMark(session) },
+                onLongClickLabel = "Markieren",
+                onClick = { if (selecting) onMark(session) else onEdit(session) },
+            )
+            .semantics { if (selecting) selected = marked },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -522,7 +623,11 @@ private fun SessionCard(
                     maxLines = 2,
                 )
             }
-            action()
+            if (selecting) {
+                Text(if (marked) "✓" else "○", fontSize = 28.sp, color = Amber, modifier = Modifier.padding(horizontal = 16.dp))
+            } else {
+                action()
+            }
         }
     }
 }
@@ -616,6 +721,8 @@ private fun EditorScreen(
     loadProjects: suspend () -> List<TogglProject>,
     /** Quests/Projekte aus dem Aufgaben-Bereich, denen die Session zugeordnet werden kann. */
     quests: List<QuestProject> = emptyList(),
+    /** Creates a new Toggl project in the default workspace. */
+    createProject: suspend (String) -> TogglProject = { throw TogglException("Nicht verbunden") },
     /** Sessions of the same kind that can go in as one interval ("Session einfügen"). */
     insertable: List<Session>,
     onPreviewChime: (Chime, Boolean) -> Unit,
@@ -627,6 +734,8 @@ private fun EditorScreen(
     var name by remember { mutableStateOf(initial.name) }
     var endless by remember { mutableStateOf(initial.endless) }
     var roundsText by remember { mutableStateOf(if (initial.endless) "1" else initial.rounds.toString()) }
+    /** Counts on after its end until Stopp; nothing for an endless one, which has no end. */
+    var overtime by remember { mutableStateOf(initial.overtime) }
     var sound by remember { mutableStateOf(initial.sound) }
     var fifth by remember { mutableStateOf(initial.fifth) }
     var kit by remember { mutableStateOf(initial.kit) }
@@ -639,6 +748,7 @@ private fun EditorScreen(
     var togglProject by remember { mutableStateOf(initial.togglProject) }
     /** Project and description picked before every start instead of fixed. */
     var togglAsk by remember { mutableStateOf(initial.togglAsks) }
+    var togglChoices by remember { mutableStateOf(initial.togglChoices) }
     var togglPauseStops by remember { mutableStateOf(initial.togglPauseStops) }
     var questId by remember { mutableStateOf(initial.questId) }
     var hexText by remember { mutableStateOf(formatHexColor(initial.flashColor)) }
@@ -696,6 +806,7 @@ private fun EditorScreen(
             }
         },
         rounds = rounds ?: ENDLESS,
+        overtime = overtime && !endless,
         sound = sound,
         fifth = fifth,
         kit = kit,
@@ -708,6 +819,7 @@ private fun EditorScreen(
         togglAskDescription = togglAsk,
         togglProject = togglProject,
         togglAskProject = togglAsk,
+        togglChoices = togglChoices,
         togglPauseStops = togglPauseStops,
         questId = questId,
     )
@@ -899,6 +1011,17 @@ private fun EditorScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Endlos, bis Stopp")
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = overtime && !endless, onCheckedChange = { overtime = it }, enabled = !endless)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Nach dem Ende weiterzählen, bis Stopp", modifier = Modifier.weight(1f))
+                }
+                if (overtime && !endless) Text(
+                    "Ist die Zeit um, kommt das Signal vom Ende – danach zählt sie wie eine Stoppuhr weiter, " +
+                        "auch in Toggl, bis du Stopp drückst.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 val round = parsed.filterNotNull().sum()
                 Text(
                     when {
@@ -1033,7 +1156,7 @@ private fun EditorScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 itemVerticalAlignment = Alignment.CenterVertically,
                             ) {
-                                TogglProjectMenu(togglProject, loadProjects) { togglProject = it }
+                                TogglProjectMenu(togglProject, loadProjects, createProject = createProject) { togglProject = it }
                                 OutlinedTextField(
                                     value = togglDescription,
                                     onValueChange = { togglDescription = it },
@@ -1043,6 +1166,8 @@ private fun EditorScreen(
                                     modifier = Modifier.widthIn(min = 180.dp, max = 320.dp),
                                 )
                             }
+                        } else {
+                            TogglChoicesEditor(togglChoices, loadProjects, createProject) { togglChoices = it }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                             Switch(checked = togglPauseStops, onCheckedChange = { togglPauseStops = it })
@@ -1084,7 +1209,13 @@ private fun EditorScreen(
                             buildString {
                                 append(
                                     if (togglAsk) {
-                                        "Beim Start fragt die App, was du machst – Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
+                                        if (togglChoices.isEmpty()) {
+                                            "Beim Start fragt die App, was du machst – Projekt und Beschreibung (vorgeschlagen: was du zuletzt gewählt hast)."
+                                        } else {
+                                            "Beim Start zur Auswahl: " + togglChoices.joinToString(", ") {
+                                                "${it.project.name} (${if (it.withDescription) "mit" else "ohne"} Beschreibung)"
+                                            } + "."
+                                        }
                                     } else {
                                         "Wird automatisch erfasst als „" + listOfNotNull(
                                             togglDescription.trim().ifBlank { if (togglProject != null) null else name.trim() },
@@ -1274,7 +1405,12 @@ private fun RunPanel(
                 fontWeight = FontWeight.Bold,
                 color = Amber,
             )
-            if (run.session.stopwatch) Text(formatClock(run.elapsedMs()), style = MaterialTheme.typography.displaySmall)
+            if (run.countsUp) Text(formatClock(run.elapsedMs()), style = MaterialTheme.typography.displaySmall)
+            if (run.overtime) Text(
+                "davon ${formatClock(run.overtimeMs())} länger als geplant",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(if (big) 32.dp else 8.dp))
             runExtra(run)
             Spacer(Modifier.height(16.dp))
@@ -1302,6 +1438,28 @@ private fun RunPanel(
             Row(horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 8.dp)) {
                 OutlinedButton(onClick = { engine.stop(run.id) }, contentPadding = padding) { Text("Stopp") }
                 Button(onClick = { engine.togglePause(run.id) }, contentPadding = padding) { Text(if (run.paused) "Weiter" else "Pause") }
+            }
+            runExtra(run)
+            return@Column
+        }
+        if (run.overtime) {
+            // The time is up: counts on like a stopwatch, and Stopp is the way out.
+            Text("Zeit um", style = MaterialTheme.typography.titleMedium)
+            Text(
+                formatClock(run.elapsedMs(now)),
+                fontSize = if (big) 96.sp else 56.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (run.paused) MaterialTheme.colorScheme.onSurfaceVariant else Amber,
+            )
+            Text(
+                "+${formatClock(run.overtimeMs(now))} · läuft weiter bis Stopp",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(if (big) 48.dp else 16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(if (big) 12.dp else 8.dp)) {
+                Button(onClick = { engine.stop(run.id) }, contentPadding = padding) { Text("Stopp") }
+                OutlinedButton(onClick = { engine.togglePause(run.id) }, contentPadding = padding) { Text(if (run.paused) "Weiter" else "Pause") }
             }
             runExtra(run)
             return@Column
@@ -1335,6 +1493,7 @@ private fun RunPanel(
         val next = run.nextStep
         Text(
             when {
+                next == null && run.session.overtime -> "Danach: zählt weiter bis Stopp"
                 next == null -> "Danach: fertig"
                 music -> "Danach: ${next.name.ifBlank { next.soundLabel() }} · ${formatDuration(next.seconds)}"
                 else -> "Danach: ${formatDuration(next.seconds)}" + if (next.name.isNotBlank()) " · ${next.name}" else ""
@@ -1367,6 +1526,7 @@ private fun RunningBanner(runs: List<RunState>, onOpen: () -> Unit) {
                         "${run.session.name} · " + when {
                             run.finished -> if (run.stopped) "gestoppt" else "fertig"
                             run.paused -> "pausiert"
+                            run.overtime -> "Zeit um · " + formatClock(run.elapsedMs(now))
                             run.session.stopwatch -> formatClock(run.elapsedMs(now))
                             else -> formatDuration(run.remainingSeconds(now))
                         },
@@ -1460,6 +1620,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                     )
                     TogglForm(
                         tracker, t.description, t.project, "Übernehmen",
+                        choices = run.session.togglChoices,
+                        sessionName = run.session.name,
                         skip = "Diesmal nicht erfassen" to { tracker.setTracked(run.id, false) },
                     ) { d, p -> tracker.edit(run.id, d, p) }
                 }
@@ -1483,6 +1645,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
             t.error?.let { TogglError(it) { tracker.retry(run.id) } }
             if (editing) TogglForm(
                 tracker, t.description, t.project, "Übernehmen",
+                choices = run.session.togglChoices,
+                sessionName = run.session.name,
                 skip = "Diesmal nicht erfassen" to {
                     tracker.setTracked(run.id, false)
                     editing = false
@@ -1511,7 +1675,11 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                     "Nicht erfasst · ${formatDuration((millis / 1000).toInt())} · ${clockTime(end - millis)}–${clockTime(end)}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                TogglForm(tracker, last?.first ?: run.session.name, last?.second, "Eintragen") { d, p -> tracker.book(run, d, p) }
+                TogglForm(
+                    tracker, last?.first ?: run.session.name, last?.second, "Eintragen",
+                    choices = run.session.togglChoices,
+                    sessionName = run.session.name,
+                ) { d, p -> tracker.book(run, d, p) }
                 return@Column
             }
             if (t.waiting && !t.deleted) {
@@ -1521,6 +1689,8 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 )
                 if (t.segments.isNotEmpty()) TogglForm(
                     tracker, t.description, t.project, "Eintragen",
+                    choices = run.session.togglChoices,
+                    sessionName = run.session.name,
                     skip = "Nicht eintragen" to { tracker.setTracked(run.id, false) },
                 ) { d, p -> tracker.edit(run.id, d, p) }
                 return@Column
@@ -1547,7 +1717,11 @@ private fun TogglPanel(run: RunState, token: String, tracker: TogglTracker, sett
                 else -> Text("Wird übertragen …", style = MaterialTheme.typography.bodySmall)
             }
             if (editing) {
-                TogglForm(tracker, t.description, t.project, "Übernehmen") { d, p ->
+                TogglForm(
+                    tracker, t.description, t.project, "Übernehmen",
+                    choices = run.session.togglChoices,
+                    sessionName = run.session.name,
+                ) { d, p ->
                     tracker.edit(run.id, d, p)
                     editing = false
                 }
@@ -1576,6 +1750,8 @@ private fun TogglStartDialog(session: Session, tracker: TogglTracker, onDismiss:
         text = {
             TogglForm(
                 tracker, description, project, "Starten",
+                choices = session.togglChoices,
+                sessionName = session.name,
                 skip = "Ohne Toggl starten" to { onStart(null, null) },
             ) { d, p -> onStart(d, p) }
         },
@@ -1605,35 +1781,244 @@ private fun TogglForm(
     initialDescription: String,
     initialProject: TogglProject?,
     action: String,
+    /** Restricts offered projects and per-project description prompts; empty = any project with description. */
+    choices: List<TogglChoice> = emptyList(),
+    sessionName: String? = null,
     /** A second, quieter button: its label and what it does ("Diesmal nicht erfassen"). */
     skip: Pair<String, () -> Unit>? = null,
     onDone: (String, TogglProject?) -> Unit,
 ) {
-    var description by remember { mutableStateOf(initialDescription) }
-    var project by remember { mutableStateOf(initialProject) }
+    val startProject = if (choices.isEmpty()) initialProject else initialProject?.takeIf { p -> choices.any { it.project.id == p.id } } ?: choices.first().project
+    var project by remember { mutableStateOf(startProject) }
+    val startDescription = when {
+        choices.isEmpty() -> initialDescription
+        !(choices.firstOrNull { it.project.id == startProject?.id } ?: choices.first()).withDescription -> ""
+        initialProject?.id == startProject?.id -> initialDescription
+        else -> sessionName?.let { startProject?.id?.let { pid -> tracker.projectDescription(it, pid) } }.orEmpty()
+    }
+    var description by remember { mutableStateOf(startDescription) }
+    val typed = remember {
+        mutableMapOf<Long, String>().apply {
+            if (startProject != null && startDescription.isNotBlank()) put(startProject.id, startDescription)
+        }
+    }
+    val activeChoice = if (choices.isEmpty()) null else choices.firstOrNull { it.project.id == project?.id } ?: choices.first()
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TogglProjectMenu(project, tracker::projects) { project = it }
-        OutlinedTextField(
-            value = description,
-            onValueChange = { description = it },
-            label = { Text("Beschreibung") },
-            // With a project, none is fine: "Musik" alone.
-            placeholder = if (project != null) ({ Text("ohne") }) else null,
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (choices.isEmpty()) {
+            TogglProjectMenu(project, tracker::projects, createProject = tracker::createProject) { project = it }
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                label = { Text("Beschreibung") },
+                // With a project, none is fine: "Musik" alone.
+                placeholder = if (project != null) ({ Text("ohne") }) else null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                choices.forEach { choice ->
+                    FilterChip(
+                        selected = activeChoice?.project?.id == choice.project.id,
+                        onClick = {
+                            project = choice.project
+                            description = if (choice.withDescription) {
+                                typed[choice.project.id] ?: sessionName?.let { tracker.projectDescription(it, choice.project.id) }.orEmpty()
+                            } else ""
+                        },
+                        label = { Text(choice.project.name) },
+                    )
+                }
+            }
+            if (activeChoice?.withDescription == true) {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = {
+                        description = it
+                        typed[activeChoice.project.id] = it
+                    },
+                    label = { Text("Beschreibung") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Text("Ohne Beschreibung", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        val canSubmit = when {
+            activeChoice == null -> description.isNotBlank() || project != null
+            activeChoice.withDescription -> description.isNotBlank()
+            else -> true
+        }
+        val submitProject = activeChoice?.project ?: project
+        val submitDescription = if (activeChoice != null && !activeChoice.withDescription) "" else description.trim()
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-            Button(enabled = description.isNotBlank() || project != null, onClick = { onDone(description.trim(), project) }) { Text(action) }
+            Button(enabled = canSubmit, onClick = { onDone(submitDescription, submitProject) }) { Text(action) }
             skip?.let { (label, onSkip) -> TextButton(onClick = onSkip) { Text(label) } }
         }
     }
 }
 
-/** "Projekt: Musik" opening the Toggl projects, fetched when it first opens. */
+/** Configures which Toggl projects a session offers before starting and whether each takes a description. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TogglProjectMenu(project: TogglProject?, load: suspend () -> List<TogglProject>, enabled: Boolean = true, onPick: (TogglProject?) -> Unit) {
+private fun TogglChoicesEditor(
+    choices: List<TogglChoice>,
+    loadProjects: suspend () -> List<TogglProject>,
+    createProject: suspend (String) -> TogglProject,
+    onChange: (List<TogglChoice>) -> Unit,
+) {
     var projects by remember { mutableStateOf<List<TogglProject>?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
+    var newOpen by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(menuOpen) {
+        if (menuOpen && projects == null) {
+            try {
+                projects = loadProjects()
+            } catch (e: TogglException) {
+                error = e.message
+                projects = emptyList()
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            if (choices.isEmpty()) "Alle Projekte stehen zur Auswahl – oder wähle hier nur die Projekte aus, die du für diese Session brauchst:"
+            else "Projekte zur Auswahl",
+            style = if (choices.isEmpty()) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelLarge,
+            color = if (choices.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+        )
+        choices.forEach { choice ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(choice.project.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = choice.withDescription,
+                    onClick = { onChange(choices.map { if (it.project.id == choice.project.id) it.copy(withDescription = true) else it }) },
+                    label = { Text("mit Beschreibung") },
+                )
+                FilterChip(
+                    selected = !choice.withDescription,
+                    onClick = { onChange(choices.map { if (it.project.id == choice.project.id) it.copy(withDescription = false) else it }) },
+                    label = { Text("ohne Beschreibung") },
+                )
+                TextButton(onClick = { onChange(choices.filterNot { it.project.id == choice.project.id }) }) { Text("✕") }
+            }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                OutlinedButton(onClick = { menuOpen = true }) { Text("+ Projekt zur Auswahl") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    val available = projects.orEmpty().filter { p -> choices.none { it.project.id == p.id } }
+                    available.forEach { p ->
+                        DropdownMenuItem(text = { Text(p.name) }, onClick = {
+                            onChange(choices + TogglChoice(p, withDescription = true))
+                            menuOpen = false
+                        })
+                    }
+                    when {
+                        projects == null -> DropdownMenuItem(text = { Text("Projekte laden …") }, onClick = {}, enabled = false)
+                        available.isEmpty() -> DropdownMenuItem(text = { Text("Keine weiteren Projekte") }, onClick = {}, enabled = false)
+                    }
+                }
+            }
+            OutlinedButton(onClick = { newOpen = true }) { Text("+ Neues Projekt …") }
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
+    if (newOpen) {
+        NewProjectDialog(
+            askWithDescription = true,
+            createProject = createProject,
+            onDismiss = { newOpen = false },
+            onCreated = { created, withDescription ->
+                projects = (projects.orEmpty() + created).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+                if (choices.none { it.project.id == created.id }) {
+                    onChange(choices + TogglChoice(created, withDescription))
+                }
+                newOpen = false
+            },
+        )
+    }
+}
+
+/** Dialog to create a new Toggl project in the user's default workspace. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NewProjectDialog(
+    askWithDescription: Boolean,
+    createProject: suspend (String) -> TogglProject,
+    onDismiss: () -> Unit,
+    onCreated: (TogglProject, Boolean) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var withDescription by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Neues Toggl-Projekt") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        error = null
+                    },
+                    label = { Text("Projektname") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (askWithDescription) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = withDescription, onClick = { withDescription = true }, label = { Text("mit Beschreibung") })
+                        FilterChip(selected = !withDescription, onClick = { withDescription = false }, label = { Text("ohne Beschreibung") })
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = name.isNotBlank() && !busy,
+                onClick = {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            val created = createProject(name.trim())
+                            onCreated(created, withDescription)
+                        } catch (e: TogglException) {
+                            error = e.message
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+            ) { Text(if (busy) "Lege an …" else "Anlegen") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Abbrechen") }
+        },
+    )
+}
+
+/** "Projekt: Musik" opening the Toggl projects, fetched when it first opens. */
+@Composable
+fun TogglProjectMenu(
+    project: TogglProject?,
+    load: suspend () -> List<TogglProject>,
+    enabled: Boolean = true,
+    createProject: (suspend (String) -> TogglProject)? = null,
+    onPick: (TogglProject?) -> Unit,
+) {
+    var projects by remember { mutableStateOf<List<TogglProject>?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var newOpen by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(menuOpen) {
         if (menuOpen && projects == null) {
@@ -1657,9 +2042,27 @@ fun TogglProjectMenu(project: TogglProject?, load: suspend () -> List<TogglProje
                     })
                 }
                 if (projects == null) DropdownMenuItem(text = { Text("Projekte laden …") }, onClick = {}, enabled = false)
+                if (createProject != null) {
+                    DropdownMenuItem(text = { Text("+ Neues Projekt …") }, onClick = {
+                        menuOpen = false
+                        newOpen = true
+                    })
+                }
             }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
+    if (newOpen && createProject != null) {
+        NewProjectDialog(
+            askWithDescription = false,
+            createProject = createProject,
+            onDismiss = { newOpen = false },
+            onCreated = { created, _ ->
+                projects = (projects.orEmpty() + created).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+                onPick(created)
+                newOpen = false
+            },
+        )
     }
 }
 
